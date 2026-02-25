@@ -1,0 +1,19 @@
+{
+  "name": "campus-recruitment-backend",
+  "version": "1.0.0",
+  "description": "REST API backend for Automated Campus Recruitment System",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "setup-db": "node database/migrate.js"
+  },
+  "keywords": [
+    "campus",
+    "recruitment",
+    "placement",
+    "api"
+  ],
+  "author": "",
+  "license": "ISC"
+}
