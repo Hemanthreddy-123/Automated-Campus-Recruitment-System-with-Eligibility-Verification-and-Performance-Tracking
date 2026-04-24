@@ -114,9 +114,8 @@ router.put('/applications/:id/status', verifyToken, requireOfficer, async (req, 
 
 // ══════════════════════════════════════════════════════
 // GET /api/applications/all-students   (Officer)
-// Get all registered students with optional filters
 // ══════════════════════════════════════════════════════
-router.get('/all-students', verifyToken, requireOfficer, async (req, res) => {
+router.get('/applications/all-students', verifyToken, requireOfficer, async (req, res) => {
     try {
         const { branch, search, placed } = req.query;
         let query = `

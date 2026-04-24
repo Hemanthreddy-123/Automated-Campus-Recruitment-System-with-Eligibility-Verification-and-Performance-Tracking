@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Sidebar from '../../components/Sidebar';
 import useStudentData from '../../hooks/useStudentData';
 import { updateStudentProfile } from '../../services/api';
@@ -20,8 +20,8 @@ export default function StudentProfile() {
     // Local edit form — pre-filled from DB
     const [form, setForm] = useState(null);
 
-    // Sync form when student data loads
-    if (student && !form) {
+    useEffect(() => {
+        if (!student || form) return;
         setForm({
             full_name: student.full_name,
             email: student.email,
@@ -31,7 +31,7 @@ export default function StudentProfile() {
             percentage: String(student.percentage),
             backlogs: String(student.backlogs),
         });
-    }
+    }, [student, form]);
 
     const handleChange = e => setForm({ ...form, [e.target.name]: e.target.value });
 

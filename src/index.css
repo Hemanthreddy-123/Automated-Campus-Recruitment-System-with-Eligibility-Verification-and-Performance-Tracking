@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
 *,
 *::before,
@@ -16,6 +16,10 @@
   --green-light: #00c44a;
   --teal: #009688;
   --teal-dark: #00796B;
+  --blue: #1e3c72;
+  --blue-light: #2a5298;
+  --purple: #6366f1;
+  --purple-light: #818cf8;
 
   /* ── Neutrals ── */
   --black: #000000;
@@ -58,8 +62,9 @@
   --shadow-green-lg: 0 8px 32px rgba(0, 166, 63, 0.35);
 
   /* ── Typography ── */
-  --font-sans: 'Inter', system-ui, sans-serif;
-  --font-display: 'Space Grotesk', 'Inter', sans-serif;
+  --font-sans: 'Poppins', 'Inter', system-ui, sans-serif;
+  --font-display: 'Poppins', 'Inter', sans-serif;
+  --font-mono: 'Inter', monospace;
 
   /* ── Radius ── */
   --r-sm: 6px;
@@ -90,6 +95,8 @@ body {
   min-height: 100vh;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  font-size: 15px;
+  font-weight: 400;
 }
 
 #root {
@@ -222,10 +229,10 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 10px 22px;
+  gap: 8px;
+  padding: 12px 24px;
   border-radius: var(--r-md);
-  font-size: 14px;
+  font-size: 15px;
   font-family: var(--font-sans);
   font-weight: 600;
   cursor: pointer;
@@ -233,7 +240,7 @@ body {
   transition: var(--t-base);
   text-decoration: none;
   white-space: nowrap;
-  letter-spacing: 0.1px;
+  letter-spacing: 0.2px;
   position: relative;
   overflow: hidden;
 }
@@ -444,12 +451,13 @@ body {
 
 .form-input {
   background: var(--white);
-  border: 1.5px solid var(--gray-300);
+  border: 2px solid var(--gray-300);
   border-radius: var(--r-md);
-  padding: 11px 14px;
+  padding: 14px 16px;
   color: var(--gray-900);
-  font-size: 14px;
+  font-size: 15px;
   font-family: var(--font-sans);
+  font-weight: 500;
   transition: var(--t-fast);
   width: 100%;
 }
@@ -504,11 +512,12 @@ body {
   top: 0;
   bottom: 0;
   width: 256px;
-  background: var(--black);
+  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
   display: flex;
   flex-direction: column;
   z-index: 100;
   overflow: hidden;
+  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.1);
 }
 
 .sidebar-header {
@@ -536,10 +545,11 @@ body {
 
 .sidebar-title {
   font-family: var(--font-display);
-  font-size: 15px;
-  font-weight: 800;
+  font-size: 16px;
+  font-weight: 600;
   color: var(--white);
   line-height: 1.2;
+  letter-spacing: -0.2px;
 }
 
 .sidebar-subtitle {
@@ -579,12 +589,12 @@ body {
 .sidebar-link {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 11px 12px;
+  gap: 12px;
+  padding: 12px 14px;
   border-radius: var(--r-md);
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.75);
   text-decoration: none;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
   transition: var(--t-fast);
   cursor: pointer;
@@ -592,6 +602,7 @@ body {
   background: transparent;
   width: 100%;
   text-align: left;
+  letter-spacing: 0.1px;
 }
 
 .sidebar-link:hover {
@@ -671,17 +682,19 @@ body {
 
 .page-title {
   font-family: var(--font-display);
-  font-size: 26px;
-  font-weight: 800;
+  font-size: 32px;
+  font-weight: 700;
   color: var(--black);
-  margin-bottom: 4px;
-  letter-spacing: -0.3px;
+  margin-bottom: 6px;
+  letter-spacing: -0.5px;
+  line-height: 1.2;
 }
 
 .page-subtitle {
   color: var(--gray-500);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 400;
+  line-height: 1.5;
 }
 
 /* ────────────────────────────────
@@ -761,16 +774,18 @@ body {
 
 .stat-value {
   font-family: var(--font-display);
-  font-size: 30px;
-  font-weight: 800;
+  font-size: 36px;
+  font-weight: 700;
   color: var(--black);
   line-height: 1;
+  letter-spacing: -0.5px;
 }
 
 .stat-label {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--gray-500);
   font-weight: 500;
+  letter-spacing: 0.2px;
 }
 
 .stat-change {
@@ -1273,6 +1288,7 @@ tbody tr:hover td {
   justify-content: center;
   z-index: 2000;
   animation: fadeIn 0.2s ease;
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 
@@ -2000,5 +2016,88 @@ tbody tr:hover td {
 
   .modal {
     padding: 24px;
+  }
+}
+
+/* ────────────────────────────────
+   CUSTOM ANIMATIONS
+──────────────────────────────── */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0) translateX(0);
+  }
+  50% {
+    transform: translateY(-20px) translateX(10px);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.2);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes gridMove {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 40px 40px;
+  }
+}
+
+@keyframes shimmer {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
   }
 }

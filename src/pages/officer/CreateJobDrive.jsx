@@ -1,34 +1,65 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../../components/Sidebar';
-import { FiSave, FiSend, FiPlus, FiCalendar, FiBriefcase, FiDollarSign, FiMapPin, FiUsers, FiInfo } from 'react-icons/fi';
+import { FiSave, FiSend, FiCalendar, FiBriefcase, FiDollarSign, FiMapPin, FiUsers, FiInfo } from 'react-icons/fi';
+import { createDrive, getUser } from '../../services/api';
 
 const branchOptions = ['Computer Science', 'Information Technology', 'Electronics & Communication', 'Electrical Engineering', 'Mechanical Engineering', 'Civil Engineering'];
-const yearOptions = ['3rd Year', '4th Year'];
+const yearOptions = [{ label: '3rd Year', value: '3' }, { label: '4th Year', value: '4' }];
 
 export default function CreateJobDrive() {
     const navigate = useNavigate();
-    const [savedDraft, setSavedDraft] = useState(false);
+    const officer = getUser();
+    const [submitting, setSubmitting] = useState(false);
+    const [submitError, setSubmitError] = useState('');
     const [selectedBranches, setSelectedBranches] = useState([]);
     const [selectedYears, setSelectedYears] = useState([]);
     const [form, setForm] = useState({
-        company: '', role: '', minPercentage: '', maxBacklogs: '0', package: '', location: '', driveDate: '', deadline: '', description: '', seats: '', rounds: '',
+        company: '', role: '', minPercentage: '', maxBacklogs: '0',
+        package: '', location: '', driveDate: '', deadline: '',
+        description: '', seats: '', rounds: '',
     });
 
     const handleChange = e => setForm({ ...form, [e.target.name]: e.target.value });
-
     const toggleBranch = (b) => setSelectedBranches(prev => prev.includes(b) ? prev.filter(x => x !== b) : [...prev, b]);
     const toggleYear = (y) => setSelectedYears(prev => prev.includes(y) ? prev.filter(x => x !== y) : [...prev, y]);
     const selectAllBranches = () => setSelectedBranches(selectedBranches.length === branchOptions.length ? [] : [...branchOptions]);
 
-    const handlePost = (e) => {
+    const handlePost = async (e) => {
         e.preventDefault();
-        navigate('/officer/applications');
+        setSubmitError('');
+
+        if (selectedBranches.length === 0) { setSubmitError('Please select at least one branch.'); return; }
+        if (selectedYears.length === 0)    { setSubmitError('Please select at least one year.'); return; }
+
+        setSubmitting(true);
+        try {
+            await createDrive({
+                company_name:        form.company,
+                job_role:            form.role,
+                description:         form.description,
+                package_lpa:         parseFloat(form.package),
+                location:            form.location,
+                required_percentage: parseFloat(form.minPercentage),
+                allowed_backlogs:    parseInt(form.maxBacklogs),
+                required_branch:     selectedBranches.join(','),
+                required_year:       selectedYears.join(','),
+                available_seats:     form.seats ? parseInt(form.seats) : null,
+                number_of_rounds:    form.rounds ? parseInt(form.rounds) : null,
+                drive_date:          form.driveDate,
+                last_date:           form.deadline,
+            });
+            navigate('/officer/applications');
+        } catch (err) {
+            setSubmitError(err.message || 'Failed to create drive. Please try again.');
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     return (
         <div className="dashboard-layout">
-            <Sidebar role="officer" user={{ name: 'Dr. S. Krishnan', id: 'ID: PO-001' }} />
+            <Sidebar role="officer" user={{ name: officer?.full_name || 'Officer', id: `ID: ${officer?.employee_id || ''}` }} />
             <main className="dashboard-main">
                 <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
@@ -36,8 +67,9 @@ export default function CreateJobDrive() {
                         <p className="page-subtitle">Fill in the details to post a new placement drive</p>
                     </div>
                     <div style={{ display: 'flex', gap: 12 }}>
-                        <button className="btn btn-secondary" onClick={() => setSavedDraft(true)}><FiSave /> {savedDraft ? 'Draft Saved ✓' : 'Save Draft'}</button>
-                        <button form="drive-form" type="submit" className="btn btn-primary"><FiSend /> Post Drive</button>
+                        <button form="drive-form" type="submit" className="btn btn-primary" disabled={submitting}>
+                            <FiSend /> {submitting ? 'Posting...' : 'Post Drive'}
+                        </button>
                     </div>
                 </div>
 
@@ -149,13 +181,15 @@ export default function CreateJobDrive() {
                                     <label className="form-label">Eligible Year(s) *</label>
                                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                         {yearOptions.map(y => (
-                                            <button key={y} type="button" onClick={() => toggleYear(y)} style={{
-                                                padding: '8px 16px', borderRadius: 8, border: `2px solid ${selectedYears.includes(y) ? 'var(--primary)' : 'var(--border)'}`,
-                                                background: selectedYears.includes(y) ? 'rgba(108,99,255,0.2)' : 'var(--bg-card2)',
-                                                color: selectedYears.includes(y) ? 'var(--primary-light)' : 'var(--text-secondary)',
-                                                cursor: 'pointer', fontSize: 13, fontWeight: selectedYears.includes(y) ? 700 : 400, fontFamily: 'Inter, sans-serif', transition: 'all 0.2s',
+                                            <button key={y.value} type="button" onClick={() => toggleYear(y.value)} style={{
+                                                padding: '8px 16px', borderRadius: 8,
+                                                border: `2px solid ${selectedYears.includes(y.value) ? 'var(--green)' : 'var(--gray-300)'}`,
+                                                background: selectedYears.includes(y.value) ? 'var(--soft-mint)' : '#fff',
+                                                color: selectedYears.includes(y.value) ? 'var(--green-dark)' : 'var(--gray-700)',
+                                                cursor: 'pointer', fontSize: 13, fontWeight: selectedYears.includes(y.value) ? 700 : 400,
+                                                fontFamily: 'var(--font-sans)', transition: 'all 0.2s',
                                             }}>
-                                                {selectedYears.includes(y) ? '✓ ' : ''}{y}
+                                                {selectedYears.includes(y.value) ? '✓ ' : ''}{y.label}
                                             </button>
                                         ))}
                                     </div>
@@ -195,8 +229,13 @@ export default function CreateJobDrive() {
                                 </div>
                             )}
 
-                            <button type="submit" className="btn btn-primary btn-lg" style={{ justifyContent: 'center' }}>
-                                <FiSend /> Post Drive Now
+                            {submitError && (
+                                <div style={{ background:'#fee2e2', border:'1px solid #fecdd3', borderRadius:8, padding:'10px 14px', fontSize:13, color:'#991b1b', marginBottom:8 }}>
+                                    {submitError}
+                                </div>
+                            )}
+                            <button type="submit" className="btn btn-primary btn-lg" style={{ justifyContent: 'center' }} disabled={submitting}>
+                                <FiSend /> {submitting ? 'Posting Drive...' : 'Post Drive Now'}
                             </button>
                         </div>
                     </div>

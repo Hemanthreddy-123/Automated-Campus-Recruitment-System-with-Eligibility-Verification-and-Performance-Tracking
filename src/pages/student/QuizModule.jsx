@@ -1,234 +1,325 @@
 import { useState, useEffect, useRef } from 'react';
 import Sidebar from '../../components/Sidebar';
-import { FiPlay, FiSend, FiArrowRight, FiClock, FiCheckCircle, FiXCircle } from 'react-icons/fi';
+import useStudentData from '../../hooks/useStudentData';
+import { startQuiz, submitQuiz, getQuizHistory } from '../../services/api';
+import { FiPlay, FiSend, FiArrowRight, FiClock, FiCheckCircle, FiXCircle, FiAlertCircle, FiBookOpen } from 'react-icons/fi';
 
-const quizBank = [
-    { id: 1, question: 'What is the time complexity of Binary Search?', options: ['O(n)', 'O(log n)', 'O(n log n)', 'O(1)'], answer: 1, explanation: 'Binary search divides the search space in half each step, giving O(log n) time complexity.' },
-    { id: 2, question: 'Which data structure uses LIFO (Last In First Out) principle?', options: ['Queue', 'Tree', 'Stack', 'Heap'], answer: 2, explanation: 'Stack follows LIFO — the last element pushed is the first to be popped.' },
-    { id: 3, question: 'What does SQL stand for?', options: ['Structured Query Language', 'Simple Query Language', 'Standard Query Logic', 'System Query Library'], answer: 0, explanation: 'SQL stands for Structured Query Language, used to manage relational databases.' },
-    { id: 4, question: 'Which sorting algorithm has the best average case time complexity?', options: ['Bubble Sort', 'Insertion Sort', 'Quick Sort', 'Merge Sort'], answer: 3, explanation: 'Merge Sort guarantees O(n log n) in all cases, making it consistently efficient.' },
-    { id: 5, question: 'What is the output of: print(type(3.14)) in Python?', options: ["<class 'int'>", "<class 'float'>", "<class 'double'>", "<class 'decimal'>"], answer: 1, explanation: "3.14 is a floating-point number in Python, so its type is 'float'." },
-    { id: 6, question: 'In OSI model, which layer handles routing?', options: ['Data Link Layer', 'Transport Layer', 'Network Layer', 'Session Layer'], answer: 2, explanation: 'The Network Layer (Layer 3) is responsible for logical addressing and routing.' },
-    { id: 7, question: 'What is a Foreign Key in a relational database?', options: ['Primary key of the same table', 'A key that references the primary key of another table', 'A unique identifier', 'An indexed column'], answer: 1, explanation: 'A Foreign Key is a column that references the primary key of another table, creating a relationship.' },
-    { id: 8, question: 'Which OOP concept allows a class to inherit properties from multiple classes?', options: ['Encapsulation', 'Polymorphism', 'Multiple Inheritance', 'Abstraction'], answer: 2, explanation: 'Multiple Inheritance allows a class to derive from more than one parent class.' },
-    { id: 9, question: 'What is the worst-case space complexity of Quick Sort?', options: ['O(1)', 'O(log n)', 'O(n)', 'O(n²)'], answer: 2, explanation: 'In the worst case, Quick Sort recursion depth can be O(n), requiring O(n) stack space.' },
-    { id: 10, question: 'Which HTTP method is used to UPDATE a resource?', options: ['GET', 'POST', 'DELETE', 'PUT'], answer: 3, explanation: 'PUT is used to completely replace/update an existing resource in REST APIs.' },
-];
-
-const QUIZ_TIME = 15 * 60; // 15 minutes
+const YEAR_LABELS = { 1: '1st Year', 2: '2nd Year', 3: '3rd Year', 4: '4th Year' };
 
 export default function QuizModule() {
-    const [view, setView] = useState('home'); // home | quiz | result
-    const [current, setCurrent] = useState(0);
-    const [selected, setSelected] = useState({});
-    const [timeLeft, setTimeLeft] = useState(QUIZ_TIME);
-    const [submitted, setSubmitted] = useState(false);
+    const { student, loading: studentLoading } = useStudentData();
+
+    const [view, setView]           = useState('home');   // home | quiz | result
+    const [questions, setQuestions] = useState([]);
+    const [quizMeta, setQuizMeta]   = useState(null);
+    const [current, setCurrent]     = useState(0);
+    const [selected, setSelected]   = useState({});
+    const [timeLeft, setTimeLeft]   = useState(900);
+    const [history, setHistory]     = useState([]);
+    const [histLoading, setHistLoading] = useState(true);
+    const [result, setResult]       = useState(null);
+    const [starting, setStarting]   = useState(false);
+    const [submitting, setSubmitting] = useState(false);
+    const [apiError, setApiError]   = useState('');
     const timerRef = useRef(null);
 
+    // Load quiz history on mount
     useEffect(() => {
-        if (view === 'quiz' && !submitted && timeLeft > 0) {
-            timerRef.current = setInterval(() => setTimeLeft(t => { if (t <= 1) { handleSubmit(); return 0; } return t - 1; }), 1000);
+        getQuizHistory()
+            .then(r => setHistory(r.data || []))
+            .catch(() => setHistory([]))
+            .finally(() => setHistLoading(false));
+    }, []);
+
+    // Timer
+    useEffect(() => {
+        if (view === 'quiz' && timeLeft > 0) {
+            timerRef.current = setInterval(() => setTimeLeft(t => {
+                if (t <= 1) { handleSubmit(); return 0; }
+                return t - 1;
+            }), 1000);
         }
         return () => clearInterval(timerRef.current);
-    }, [view, submitted]);
+    }, [view]);
 
-    const handleSubmit = () => {
-        clearInterval(timerRef.current);
-        setSubmitted(true);
-        setView('result');
+    const formatTime = (s) =>
+        `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
+    const handleStart = async () => {
+        setStarting(true);
+        setApiError('');
+        try {
+            const res = await startQuiz();
+            setQuizMeta(res.data);
+            setQuestions(res.data.questions || []);
+            setTimeLeft(res.data.time_limit_seconds || 900);
+            setSelected({});
+            setCurrent(0);
+            setResult(null);
+            setView('quiz');
+        } catch (e) {
+            setApiError(e.message || 'Failed to start quiz');
+        } finally {
+            setStarting(false);
+        }
     };
 
-    const score = quizBank.filter(q => selected[q.id] === q.answer).length;
+    const handleSubmit = async () => {
+        clearInterval(timerRef.current);
+        if (submitting) return;
+        setSubmitting(true);
+        try {
+            const answers = Object.entries(selected).map(([question_id, selected_option]) => ({
+                question_id: parseInt(question_id),
+                selected_option,
+            }));
+            const timeTaken = (quizMeta?.time_limit_seconds || 900) - timeLeft;
+            const res = await submitQuiz({
+                answers,
+                time_taken: timeTaken,
+                quiz_name: quizMeta?.quiz_name || 'General Aptitude & Technical Quiz',
+            });
+            setResult(res.data);
+            // Refresh history
+            getQuizHistory().then(r => setHistory(r.data || [])).catch(() => {});
+            setView('result');
+        } catch (e) {
+            setApiError(e.message || 'Failed to submit quiz');
+        } finally {
+            setSubmitting(false);
+        }
+    };
 
-    const formatTime = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    const sidebarUser = student
+        ? { name: student.full_name, roll: `Roll: ${student.roll_number}`, sessionInfo: `${YEAR_LABELS[student.year] || ''} · ${student.branch?.split(' ')[0]}` }
+        : { name: '...', roll: '' };
 
-    const q = quizBank[current];
+    const q = questions[current];
 
+    // ── HOME ────────────────────────────────────────────────────
     if (view === 'home') return (
         <div className="dashboard-layout">
-            <Sidebar role="student" user={{ name: 'Rahul Sharma', roll: 'Roll: 21CS047' }} />
+            <style>{`
+                .qm-opt { border:2px solid var(--gray-200); border-radius:10px; padding:12px 16px; cursor:pointer; background:#fff; text-align:left; font-family:var(--font-sans); font-size:13px; font-weight:500; color:var(--gray-700); transition:all .18s; display:flex; align-items:center; gap:12px; }
+                .qm-opt:hover { border-color:var(--green); color:var(--green-dark); background:var(--soft-mint); }
+                .qm-opt.selected { border-color:var(--green); background:var(--soft-mint); color:var(--green-dark); font-weight:700; }
+                .qm-num { width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; flex-shrink:0; }
+            `}</style>
+            <Sidebar role="student" user={sidebarUser} />
             <main className="dashboard-main">
-                <div className="page-header">
-                    <h1 className="page-title">Quiz Module</h1>
-                    <p className="page-subtitle">Test your knowledge with timed multiple-choice questions</p>
+                <div className="dashboard-topbar">
+                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                        <FiBookOpen style={{ color:'var(--green)' }} />
+                        <span style={{ fontSize:14, fontWeight:700, color:'var(--black)' }}>Quiz Module</span>
+                    </div>
                 </div>
 
-                <div style={{ maxWidth: 700, margin: '0 auto' }}>
-                    {/* Quiz Info Card */}
-                    <div className="card" style={{ background: 'linear-gradient(135deg, rgba(0,212,170,0.1) 0%, rgba(0,151,167,0.05) 100%)', borderColor: 'rgba(0,212,170,0.3)', marginBottom: 24, textAlign: 'center', padding: 48 }}>
-                        <div style={{ fontSize: 64, marginBottom: 16 }}>📝</div>
-                        <h2 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 24, fontWeight: 800, marginBottom: 12 }}>Technical Aptitude Quiz</h2>
-                        <p style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>Topics: Data Structures, Algorithms, DBMS, OOP, Networking</p>
-                        <div style={{ display: 'flex', justifyContent: 'center', gap: 32, marginBottom: 32 }}>
-                            {[
-                                { icon: '📊', label: 'Questions', value: '10' },
-                                { icon: '⏱', label: 'Duration', value: '15 mins' },
-                                { icon: '🎯', label: 'Pass Score', value: '60%' },
-                                { icon: '⭐', label: 'Max Score', value: '100 pts' },
-                            ].map((info, i) => (
-                                <div key={i} style={{ textAlign: 'center' }}>
-                                    <div style={{ fontSize: 24, marginBottom: 6 }}>{info.icon}</div>
-                                    <div style={{ fontWeight: 800, fontSize: 20, color: 'var(--text-primary)' }}>{info.value}</div>
-                                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{info.label}</div>
-                                </div>
-                            ))}
-                        </div>
-                        <div style={{ background: 'rgba(255,209,102,0.1)', border: '1px solid rgba(255,209,102,0.2)', borderRadius: 10, padding: 14, marginBottom: 28, fontSize: 13, color: 'var(--accent2)', textAlign: 'left' }}>
-                            ⚠ <strong>Note:</strong> Once started, the quiz timer cannot be paused. Each question has only one correct answer.
-                        </div>
-                        <button className="btn btn-success btn-lg" onClick={() => setView('quiz')}><FiPlay /> Start Quiz</button>
-                    </div>
-
-                    {/* Past Quiz Results */}
-                    <div className="table-container">
-                        <div className="table-header-bar"><span className="table-title">Past Quiz History</span></div>
-                        <table>
-                            <thead><tr><th>Quiz Name</th><th>Date</th><th>Score</th><th>Result</th></tr></thead>
-                            <tbody>
-                                {[
-                                    { name: 'Core Java Quiz', date: 'Feb 10', score: '85%', pass: true },
-                                    { name: 'Aptitude Test #3', date: 'Feb 5', score: '72%', pass: true },
-                                    { name: 'DBMS Concepts', date: 'Jan 25', score: '55%', pass: false },
-                                ].map((r, i) => (
-                                    <tr key={i}>
-                                        <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{r.name}</td>
-                                        <td>{r.date}</td>
-                                        <td style={{ fontWeight: 700, color: r.pass ? 'var(--secondary)' : 'var(--accent)' }}>{r.score}</td>
-                                        <td><span className={`badge ${r.pass ? 'badge-success' : 'badge-danger'}`}>{r.pass ? 'Pass' : 'Fail'}</span></td>
-                                    </tr>
+                <div style={{ maxWidth:680, margin:'0 auto' }}>
+                    {/* Quiz card */}
+                    <div style={{ background:'linear-gradient(135deg,#0a4a2d 0%,#00A63F 60%,#009688 100%)', borderRadius:16, padding:'28px 32px', marginBottom:20, position:'relative', overflow:'hidden' }}>
+                        <div style={{ position:'absolute', top:'-20%', right:'5%', width:180, height:180, background:'rgba(255,255,255,0.06)', borderRadius:'50%', pointerEvents:'none' }} />
+                        <div style={{ position:'relative', zIndex:1 }}>
+                            <div style={{ fontSize:40, marginBottom:10 }}>📝</div>
+                            <h2 style={{ fontFamily:'var(--font-display)', fontSize:20, fontWeight:800, color:'#fff', marginBottom:6 }}>Technical Aptitude Quiz</h2>
+                            <p style={{ color:'rgba(255,255,255,0.65)', fontSize:13, marginBottom:20 }}>Data Structures • Algorithms • DBMS • OOP • Networking</p>
+                            <div style={{ display:'flex', gap:16, marginBottom:22, flexWrap:'wrap' }}>
+                                {[['📊','10','Questions'],['⏱','15 min','Duration'],['🎯','50%','Pass Mark'],['⭐','100','Max Score']].map(([icon,val,lbl],i) => (
+                                    <div key={i} style={{ background:'rgba(255,255,255,0.12)', borderRadius:10, padding:'10px 16px', textAlign:'center', minWidth:70 }}>
+                                        <div style={{ fontSize:18, marginBottom:3 }}>{icon}</div>
+                                        <div style={{ fontWeight:800, fontSize:15, color:'#fff' }}>{val}</div>
+                                        <div style={{ fontSize:10, color:'rgba(255,255,255,0.55)' }}>{lbl}</div>
+                                    </div>
                                 ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </main>
-        </div>
-    );
-
-    if (view === 'result') return (
-        <div className="dashboard-layout">
-            <Sidebar role="student" user={{ name: 'Rahul Sharma', roll: 'Roll: 21CS047' }} />
-            <main className="dashboard-main">
-                <div style={{ maxWidth: 800, margin: '0 auto' }}>
-                    {/* Score Banner */}
-                    <div className="card" style={{ textAlign: 'center', padding: 48, marginBottom: 24, background: score >= 6 ? 'linear-gradient(135deg, rgba(0,212,170,0.12) 0%, rgba(0,151,167,0.05) 100%)' : 'linear-gradient(135deg, rgba(255,101,132,0.12) 0%, rgba(255,142,83,0.05) 100%)' }}>
-                        <div style={{ fontSize: 64, marginBottom: 16 }}>{score >= 6 ? '🏆' : '😔'}</div>
-                        <h2 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 32, fontWeight: 800, marginBottom: 8 }}>
-                            Quiz Completed!
-                        </h2>
-                        <div style={{ fontSize: 56, fontWeight: 900, background: score >= 6 ? 'var(--gradient-secondary)' : 'var(--gradient-accent)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', margin: '10px 0' }}>
-                            {score * 10}/100
-                        </div>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: 16, marginBottom: 20 }}>
-                            You answered <strong style={{ color: 'var(--text-primary)' }}>{score} out of {quizBank.length}</strong> questions correctly
-                        </p>
-                        <span className={`badge ${score >= 6 ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: 15, padding: '8px 24px' }}>
-                            {score >= 6 ? '✅ PASSED' : '❌ FAILED'}
-                        </span>
-                        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 24 }}>
-                            <button className="btn btn-primary" onClick={() => { setView('home'); setSelected({}); setCurrent(0); setTimeLeft(QUIZ_TIME); setSubmitted(false); }}><FiPlay /> Retake Quiz</button>
-                            <button className="btn btn-secondary" onClick={() => setView('review')}>Review Answers <FiArrowRight /></button>
-                        </div>
-                    </div>
-
-                    {/* Answer Review */}
-                    <h3 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 18, fontWeight: 700, marginBottom: 16 }}>Answer Review</h3>
-                    {quizBank.map((q, i) => {
-                        const userAns = selected[q.id];
-                        const isCorrect = userAns === q.answer;
-                        return (
-                            <div key={q.id} className="card" style={{ marginBottom: 12, borderColor: isCorrect ? 'rgba(0,212,170,0.3)' : 'rgba(255,101,132,0.3)' }}>
-                                <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-                                    <span style={{ fontSize: 20 }}>{isCorrect ? <FiCheckCircle style={{ color: 'var(--secondary)' }} /> : <FiXCircle style={{ color: 'var(--accent)' }} />}</span>
-                                    <p style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 14 }}>Q{i + 1}. {q.question}</p>
-                                </div>
-                                <div style={{ paddingLeft: 32 }}>
-                                    {q.options.map((opt, oi) => (
-                                        <div key={oi} style={{ padding: '6px 12px', borderRadius: 8, fontSize: 13, marginBottom: 4, background: oi === q.answer ? 'rgba(0,212,170,0.1)' : oi === userAns && !isCorrect ? 'rgba(255,101,132,0.1)' : 'transparent', color: oi === q.answer ? 'var(--secondary)' : oi === userAns && !isCorrect ? 'var(--accent)' : 'var(--text-secondary)', fontWeight: oi === q.answer ? 700 : 400 }}>
-                                            {oi === q.answer ? '✓ ' : oi === userAns && !isCorrect ? '✗ ' : '  '}{opt}
-                                        </div>
-                                    ))}
-                                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, fontStyle: 'italic' }}>💡 {q.explanation}</p>
-                                </div>
                             </div>
-                        );
-                    })}
-                </div>
-            </main>
-        </div>
-    );
-
-    // Active Quiz
-    return (
-        <div className="dashboard-layout">
-            <Sidebar role="student" user={{ name: 'Rahul Sharma', roll: 'Roll: 21CS047' }} />
-            <main className="dashboard-main">
-                {/* Progress Header */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
-                    <div>
-                        <h1 className="page-title">Technical Aptitude Quiz</h1>
-                        <p className="page-subtitle">Question {current + 1} of {quizBank.length}</p>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <div className={`timer-display ${timeLeft < 120 ? 'danger' : ''}`}><FiClock style={{ marginRight: 8 }} />{formatTime(timeLeft)}</div>
-                        <button className="btn btn-danger btn-sm" onClick={handleSubmit}><FiSend /> Submit Quiz</button>
-                    </div>
-                </div>
-
-                {/* Progress Bar */}
-                <div className="progress-bar-container" style={{ marginBottom: 24 }}>
-                    <div className="progress-bar-fill" style={{ width: `${((current + 1) / quizBank.length) * 100}%` }} />
-                </div>
-
-                {/* Question Card */}
-                <div style={{ maxWidth: 760, margin: '0 auto' }}>
-                    <div className="card" style={{ padding: 36, marginBottom: 20 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-                            <span className="badge badge-primary">Q {current + 1}</span>
-                            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                                {Object.keys(selected).length} answered
-                            </span>
-                        </div>
-                        <h2 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 28, lineHeight: 1.5 }}>
-                            {q.question}
-                        </h2>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                            {q.options.map((opt, i) => (
-                                <button key={i} onClick={() => setSelected(prev => ({ ...prev, [q.id]: i }))} style={{
-                                    background: selected[q.id] === i ? 'rgba(108,99,255,0.2)' : 'var(--bg-card2)',
-                                    border: `2px solid ${selected[q.id] === i ? 'var(--primary)' : 'var(--border)'}`,
-                                    borderRadius: 12, padding: '14px 20px', textAlign: 'left', cursor: 'pointer', color: selected[q.id] === i ? 'var(--primary-light)' : 'var(--text-secondary)',
-                                    fontWeight: selected[q.id] === i ? 700 : 400, fontSize: 14, transition: 'all 0.2s', fontFamily: 'Inter, sans-serif', display: 'flex', alignItems: 'center', gap: 14,
-                                }}>
-                                    <span style={{ width: 28, height: 28, borderRadius: '50%', background: selected[q.id] === i ? 'var(--primary)' : 'var(--bg-card3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800, color: selected[q.id] === i ? 'white' : 'var(--text-muted)', flexShrink: 0 }}>
-                                        {String.fromCharCode(65 + i)}
-                                    </span>
-                                    {opt}
-                                </button>
-                            ))}
+                            <div style={{ background:'rgba(255,255,255,0.1)', border:'1px solid rgba(255,255,255,0.2)', borderRadius:8, padding:'10px 14px', fontSize:12, color:'rgba(255,255,255,0.75)', marginBottom:20 }}>
+                                ⚠ Once started, the timer cannot be paused. Each question has one correct answer.
+                            </div>
+                            {apiError && (
+                                <div style={{ background:'rgba(239,68,68,0.15)', border:'1px solid rgba(239,68,68,0.3)', borderRadius:8, padding:'8px 12px', fontSize:12, color:'#fca5a5', marginBottom:12 }}>
+                                    {apiError}
+                                </div>
+                            )}
+                            <button className="btn btn-dark" onClick={handleStart} disabled={starting} style={{ background:'#fff', color:'var(--green-dark)', fontWeight:700 }}>
+                                {starting ? 'Loading...' : <><FiPlay size={14} /> Start Quiz</>}
+                            </button>
                         </div>
                     </div>
 
-                    {/* Navigation */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <button className="btn btn-outline" onClick={() => setCurrent(c => Math.max(0, c - 1))} disabled={current === 0}>← Previous</button>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                            {quizBank.map((_, i) => (
-                                <button key={i} onClick={() => setCurrent(i)} style={{
-                                    width: 32, height: 32, borderRadius: '50%', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
-                                    background: i === current ? 'var(--primary)' : selected[quizBank[i].id] !== undefined ? 'rgba(0,212,170,0.3)' : 'var(--bg-card2)',
-                                    color: i === current ? 'white' : selected[quizBank[i].id] !== undefined ? 'var(--secondary)' : 'var(--text-muted)',
-                                    transition: 'all 0.2s'
-                                }}>{i + 1}</button>
-                            ))}
+                    {/* History */}
+                    <div style={{ background:'#fff', border:'1px solid var(--gray-200)', borderRadius:14, overflow:'hidden', boxShadow:'var(--shadow-sm)' }}>
+                        <div style={{ padding:'14px 18px', borderBottom:'1px solid var(--gray-200)', display:'flex', alignItems:'center', gap:8 }}>
+                            <span style={{ width:26, height:26, borderRadius:7, background:'var(--soft-mint)', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--green)' }}><FiBookOpen size={13} /></span>
+                            <span style={{ fontSize:13, fontWeight:700, color:'var(--black)' }}>Quiz History</span>
                         </div>
-                        {current < quizBank.length - 1 ? (
-                            <button className="btn btn-primary" onClick={() => setCurrent(c => Math.min(quizBank.length - 1, c + 1))}>Next <FiArrowRight /></button>
+                        {histLoading ? (
+                            <div style={{ padding:'24px', textAlign:'center', color:'var(--gray-500)', fontSize:13 }}>Loading...</div>
+                        ) : history.length === 0 ? (
+                            <div style={{ padding:'24px', textAlign:'center', color:'var(--gray-500)', fontSize:13 }}>No quizzes taken yet. Start your first quiz!</div>
                         ) : (
-                            <button className="btn btn-success" onClick={handleSubmit}><FiSend /> Submit Quiz</button>
+                            <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                                <thead>
+                                    <tr style={{ background:'var(--gray-100)' }}>
+                                        {['Quiz Name','Date','Score','Result'].map(h => (
+                                            <th key={h} style={{ padding:'9px 16px', textAlign:'left', fontSize:10, fontWeight:700, color:'var(--gray-700)', textTransform:'uppercase', letterSpacing:'0.6px' }}>{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {history.map((r) => (
+                                        <tr key={r.quiz_id} style={{ borderBottom:'1px solid var(--gray-100)' }}>
+                                            <td style={{ padding:'11px 16px', fontWeight:600, color:'var(--black)', fontSize:13 }}>{r.quiz_name}</td>
+                                            <td style={{ padding:'11px 16px', fontSize:12, color:'var(--gray-500)' }}>
+                                                {new Date(r.attempt_date).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'2-digit' })}
+                                            </td>
+                                            <td style={{ padding:'11px 16px', fontWeight:700, fontSize:13, color: r.passed ? 'var(--green)' : '#ef4444' }}>
+                                                {r.score}/{r.total_marks}
+                                            </td>
+                                            <td style={{ padding:'11px 16px' }}>
+                                                <span className={`badge ${r.passed ? 'badge-success' : 'badge-danger'}`}>{r.passed ? 'Pass' : 'Fail'}</span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         )}
                     </div>
                 </div>
+            </main>
+        </div>
+    );
+
+    // ── RESULT ──────────────────────────────────────────────────
+    if (view === 'result') return (
+        <div className="dashboard-layout">
+            <Sidebar role="student" user={sidebarUser} />
+            <main className="dashboard-main">
+                <div style={{ maxWidth:720, margin:'0 auto' }}>
+                    {/* Score banner */}
+                    <div style={{
+                        background: result?.passed
+                            ? 'linear-gradient(135deg,#0a4a2d,#00A63F)'
+                            : 'linear-gradient(135deg,#7f1d1d,#ef4444)',
+                        borderRadius:16, padding:'28px 32px', marginBottom:20, textAlign:'center', position:'relative', overflow:'hidden',
+                    }}>
+                        <div style={{ position:'absolute', top:'-20%', right:'5%', width:160, height:160, background:'rgba(255,255,255,0.06)', borderRadius:'50%', pointerEvents:'none' }} />
+                        <div style={{ fontSize:48, marginBottom:8 }}>{result?.passed ? '🏆' : '😔'}</div>
+                        <h2 style={{ fontFamily:'var(--font-display)', fontSize:22, fontWeight:800, color:'#fff', marginBottom:6 }}>Quiz Completed!</h2>
+                        <div style={{ fontSize:48, fontWeight:900, color:'#fff', lineHeight:1, marginBottom:6 }}>{result?.score ?? 0}<span style={{ fontSize:20, opacity:0.7 }}>/{result?.total_marks ?? 100}</span></div>
+                        <p style={{ color:'rgba(255,255,255,0.7)', fontSize:13, marginBottom:16 }}>
+                            {result?.percentage ?? 0}% — {result?.passed ? '✅ Passed' : '❌ Failed'}
+                        </p>
+                        <div style={{ display:'flex', gap:10, justifyContent:'center', flexWrap:'wrap' }}>
+                            <button className="btn btn-sm" style={{ background:'rgba(255,255,255,0.15)', color:'#fff', border:'1px solid rgba(255,255,255,0.3)' }}
+                                onClick={() => { setView('home'); setResult(null); }}>
+                                <FiPlay size={13} /> Take Again
+                            </button>
+                            <button className="btn btn-sm" style={{ background:'#fff', color:'var(--green-dark)', fontWeight:700 }}
+                                onClick={() => setView('review')}>
+                                Review Answers <FiArrowRight size={13} />
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Answer review */}
+                    <h3 style={{ fontFamily:'var(--font-display)', fontSize:15, fontWeight:700, color:'var(--black)', marginBottom:12 }}>Answer Review</h3>
+                    {(result?.review || []).map((r, i) => (
+                        <div key={r.question_id} style={{ background:'#fff', border:`1px solid ${r.is_correct ? 'var(--mint-mid)' : '#fecdd3'}`, borderRadius:12, padding:'16px 18px', marginBottom:10 }}>
+                            <div style={{ display:'flex', gap:10, marginBottom:10 }}>
+                                {r.is_correct ? <FiCheckCircle style={{ color:'var(--green)', flexShrink:0, marginTop:2 }} /> : <FiXCircle style={{ color:'#ef4444', flexShrink:0, marginTop:2 }} />}
+                                <p style={{ fontWeight:600, color:'var(--black)', fontSize:13, margin:0 }}>Q{i+1}. {r.question}</p>
+                            </div>
+                            <div style={{ paddingLeft:26 }}>
+                                {questions[i]?.options?.map((opt, oi) => (
+                                    <div key={oi} style={{
+                                        padding:'5px 10px', borderRadius:7, fontSize:12, marginBottom:3,
+                                        background: oi === r.correct_option ? 'var(--soft-mint)' : oi === r.selected_option && !r.is_correct ? '#fee2e2' : 'transparent',
+                                        color: oi === r.correct_option ? 'var(--green-dark)' : oi === r.selected_option && !r.is_correct ? '#991b1b' : 'var(--gray-600)',
+                                        fontWeight: oi === r.correct_option ? 700 : 400,
+                                    }}>
+                                        {oi === r.correct_option ? '✓ ' : oi === r.selected_option && !r.is_correct ? '✗ ' : '  '}{opt}
+                                    </div>
+                                ))}
+                                <p style={{ fontSize:11, color:'var(--gray-500)', marginTop:6, fontStyle:'italic' }}>💡 {r.explanation}</p>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </main>
+        </div>
+    );
+
+    // ── ACTIVE QUIZ ─────────────────────────────────────────────
+    return (
+        <div className="dashboard-layout">
+            <style>{`
+                .qm-opt { border:2px solid var(--gray-200); border-radius:10px; padding:12px 16px; cursor:pointer; background:#fff; text-align:left; font-family:var(--font-sans); font-size:13px; font-weight:500; color:var(--gray-700); transition:all .18s; display:flex; align-items:center; gap:12px; width:100%; }
+                .qm-opt:hover { border-color:var(--green); color:var(--green-dark); background:var(--soft-mint); }
+                .qm-opt.selected { border-color:var(--green); background:var(--soft-mint); color:var(--green-dark); font-weight:700; }
+            `}</style>
+            <Sidebar role="student" user={sidebarUser} />
+            <main className="dashboard-main">
+                {/* Header */}
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16, flexWrap:'wrap', gap:10 }}>
+                    <div>
+                        <h2 style={{ fontFamily:'var(--font-display)', fontSize:17, fontWeight:800, color:'var(--black)', marginBottom:2 }}>{quizMeta?.quiz_name}</h2>
+                        <p style={{ fontSize:12, color:'var(--gray-500)' }}>Question {current + 1} of {questions.length}</p>
+                    </div>
+                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                        <div className={`timer-display${timeLeft < 120 ? ' danger' : ''}`} style={{ fontSize:15, padding:'8px 16px' }}>
+                            <FiClock size={13} style={{ marginRight:6 }} />{formatTime(timeLeft)}
+                        </div>
+                        <button className="btn btn-danger btn-sm" onClick={handleSubmit} disabled={submitting}>
+                            <FiSend size={13} /> {submitting ? 'Submitting...' : 'Submit'}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Progress */}
+                <div style={{ background:'var(--gray-200)', borderRadius:99, height:5, marginBottom:20, overflow:'hidden' }}>
+                    <div style={{ height:'100%', borderRadius:99, background:'var(--green)', width:`${((current + 1) / questions.length) * 100}%`, transition:'width .3s' }} />
+                </div>
+
+                {q && (
+                    <div style={{ maxWidth:700, margin:'0 auto' }}>
+                        <div style={{ background:'#fff', border:'1px solid var(--gray-200)', borderRadius:14, padding:'22px 24px', marginBottom:16, boxShadow:'var(--shadow-sm)' }}>
+                            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:14 }}>
+                                <span className="badge badge-primary">Q {current + 1}</span>
+                                <span style={{ fontSize:12, color:'var(--gray-500)' }}>{Object.keys(selected).length} answered</span>
+                            </div>
+                            <h3 style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:700, color:'var(--black)', marginBottom:18, lineHeight:1.55 }}>{q.question}</h3>
+                            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                                {q.options.map((opt, i) => (
+                                    <button key={i} className={`qm-opt${selected[q.id] === i ? ' selected' : ''}`}
+                                        onClick={() => setSelected(prev => ({ ...prev, [q.id]: i }))}>
+                                        <span style={{ width:26, height:26, borderRadius:'50%', background: selected[q.id] === i ? 'var(--green)' : 'var(--gray-100)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:800, color: selected[q.id] === i ? '#fff' : 'var(--gray-500)', flexShrink:0 }}>
+                                            {String.fromCharCode(65 + i)}
+                                        </span>
+                                        {opt}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Navigation */}
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                            <button className="btn btn-outline btn-sm" onClick={() => setCurrent(c => Math.max(0, c - 1))} disabled={current === 0}>← Prev</button>
+                            <div style={{ display:'flex', gap:5 }}>
+                                {questions.map((_, i) => (
+                                    <button key={i} onClick={() => setCurrent(i)} style={{
+                                        width:28, height:28, borderRadius:'50%', border:'none', cursor:'pointer', fontSize:11, fontWeight:700,
+                                        background: i === current ? 'var(--green)' : selected[questions[i]?.id] !== undefined ? 'var(--soft-mint)' : 'var(--gray-100)',
+                                        color: i === current ? '#fff' : selected[questions[i]?.id] !== undefined ? 'var(--green-dark)' : 'var(--gray-500)',
+                                        transition:'all .15s',
+                                    }}>{i + 1}</button>
+                                ))}
+                            </div>
+                            {current < questions.length - 1
+                                ? <button className="btn btn-primary btn-sm" onClick={() => setCurrent(c => c + 1)}>Next <FiArrowRight size={13} /></button>
+                                : <button className="btn btn-success btn-sm" onClick={handleSubmit} disabled={submitting}><FiSend size={13} /> Submit</button>
+                            }
+                        </div>
+                    </div>
+                )}
             </main>
         </div>
     );

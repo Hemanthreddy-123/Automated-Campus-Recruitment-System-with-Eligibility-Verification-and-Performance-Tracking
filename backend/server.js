@@ -38,13 +38,13 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // ── API Routes ───────────────────────────────────────────────
-app.use('/api', authRoutes);          // POST /api/register | POST /api/login
-app.use('/api/student', studentRoutes);        // GET  /api/student/profile | PUT /api/student/update
-app.use('/api/drives', drivesRoutes);         // GET  /api/drives  | POST /api/drives/create
-app.use('/api', applicationsRoutes);   // POST /api/apply   | GET /api/applications
-app.use('/api/quiz', quizRoutes);           // POST /api/quiz/start | POST /api/quiz/submit
-app.use('/api/coding', codingRoutes);         // POST /api/coding/start | POST /api/coding/submit
-app.use('/api/reports', reportsRoutes);        // GET  /api/reports/analytics | GET /api/reports/performance
+app.use('/api', authRoutes);                    // POST /api/register | POST /api/login
+app.use('/api/student', studentRoutes);         // GET  /api/student/profile | PUT /api/student/update
+app.use('/api/drives', drivesRoutes);           // GET  /api/drives  | POST /api/drives/create
+app.use('/api', applicationsRoutes);            // POST /api/apply | GET /api/applications | GET /api/applications/all-students
+app.use('/api/quiz', quizRoutes);               // POST /api/quiz/start | POST /api/quiz/submit
+app.use('/api/coding', codingRoutes);           // POST /api/coding/start | POST /api/coding/submit
+app.use('/api/reports', reportsRoutes);         // GET  /api/reports/analytics | GET /api/reports/performance
 
 // ── Health check ─────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {

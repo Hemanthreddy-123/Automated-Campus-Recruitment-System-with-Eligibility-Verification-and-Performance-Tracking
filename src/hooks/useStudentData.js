@@ -2,7 +2,7 @@
 // Shared hook — fetches the logged-in student's real data from MySQL via API
 // Used by: StudentDashboard, StudentProfile, Sidebar, PerformanceTracking, etc.
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getToken, getUser, logout } from '../services/api';
 
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -14,8 +14,11 @@ export default function useStudentData() {
     const [drives, setDrives] = useState([]);     // all active drives
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const hasFetched = useRef(false); // Prevent duplicate API calls
 
     useEffect(() => {
+        if (hasFetched.current) return; // Skip if already fetched
+        
         const token = getToken();
         if (!token) { logout(); return; }
 
@@ -24,6 +27,7 @@ export default function useStudentData() {
         async function fetchAll() {
             try {
                 setLoading(true);
+                hasFetched.current = true; // Mark as fetched
 
                 // 1. Student profile (includes performance row)
                 const profileRes = await fetch(`${BASE}/student/profile`, { headers });
