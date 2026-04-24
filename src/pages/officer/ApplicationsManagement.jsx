@@ -1,46 +1,76 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Sidebar from '../../components/Sidebar';
-import { FiSearch, FiDownload, FiFilter, FiEye, FiCheckCircle, FiXCircle, FiChevronDown } from 'react-icons/fi';
-
-const allApplications = [
-    { id: 1, name: 'Priya Patel', roll: '21CS012', branch: 'CS', year: '4th', cgpa: 9.1, backlogs: 0, company: 'Google', role: 'SWE', status: 'shortlisted', date: 'Feb 15', eligible: true },
-    { id: 2, name: 'Arjun Mehta', roll: '21CS047', branch: 'CS', year: '4th', cgpa: 8.4, backlogs: 0, company: 'Microsoft', role: 'SDE Intern', status: 'applied', date: 'Feb 16', eligible: true },
-    { id: 3, name: 'Sneha Reddy', roll: '21IT023', branch: 'IT', year: '4th', cgpa: 8.8, backlogs: 0, company: 'Amazon', role: 'SDE-I', status: 'selected', date: 'Feb 12', eligible: true },
-    { id: 4, name: 'Rahul Sharma', roll: '21CS031', branch: 'CS', year: '4th', cgpa: 7.2, backlogs: 1, company: 'TCS', role: 'Developer', status: 'applied', date: 'Feb 18', eligible: true },
-    { id: 5, name: 'Kavya Singh', roll: '21IT045', branch: 'IT', year: '4th', cgpa: 8.6, backlogs: 0, company: 'Google', role: 'SWE', status: 'applied', date: 'Feb 19', eligible: true },
-    { id: 6, name: 'Dev Patel', roll: '21ECE012', branch: 'ECE', year: '4th', cgpa: 6.9, backlogs: 2, company: 'Infosys', role: 'Systems Eng.', status: 'applied', date: 'Feb 20', eligible: false },
-    { id: 7, name: 'Riya Sharma', roll: '21CS088', branch: 'CS', year: '4th', cgpa: 9.4, backlogs: 0, company: 'Google', role: 'SWE', status: 'shortlisted', date: 'Feb 15', eligible: true },
-    { id: 8, name: 'Amit Kumar', roll: '21ME033', branch: 'ME', year: '4th', cgpa: 6.5, backlogs: 0, company: 'Wipro', role: 'Engineer', status: 'rejected', date: 'Feb 11', eligible: true },
-];
+import { FiSearch, FiDownload, FiFilter, FiEye, FiCheckCircle, FiXCircle } from 'react-icons/fi';
+import { getApplications, updateApplicationStatus, getUser } from '../../services/api';
 
 const statusConfig = {
-    shortlisted: { label: 'Shortlisted', cls: 'badge-warning', icon: '⭐' },
-    applied: { label: 'Under Review', cls: 'badge-primary', icon: '📋' },
-    selected: { label: 'Selected', cls: 'badge-success', icon: '🏆' },
-    rejected: { label: 'Rejected', cls: 'badge-danger', icon: '✗' },
+    Pending: { label: 'Under Review', cls: 'badge-primary', icon: '📋' },
+    Shortlisted: { label: 'Shortlisted', cls: 'badge-warning', icon: '⭐' },
+    Selected: { label: 'Selected', cls: 'badge-success', icon: '🏆' },
+    Rejected: { label: 'Rejected', cls: 'badge-danger', icon: '✗' },
 };
 
 export default function ApplicationsManagement() {
     const [search, setSearch] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
     const [filterDrive, setFilterDrive] = useState('all');
-    const [applications, setApplications] = useState(allApplications);
+    const [applications, setApplications] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [updating, setUpdating] = useState(null); // application_id being updated
+    const officer = getUser();
+
+    useEffect(() => {
+        fetchApplications();
+    }, []);
+
+    const fetchApplications = async () => {
+        try {
+            setLoading(true);
+            const response = await getApplications();
+            setApplications(response.data || []);
+        } catch (error) {
+            console.error('Error fetching applications:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const filtered = applications.filter(a => {
-        const matchSearch = a.name.toLowerCase().includes(search.toLowerCase()) || a.roll.toLowerCase().includes(search.toLowerCase()) || a.company.toLowerCase().includes(search.toLowerCase());
-        const matchStatus = filterStatus === 'all' || a.status === filterStatus;
-        const matchDrive = filterDrive === 'all' || a.company === filterDrive;
+        const matchSearch = a.full_name?.toLowerCase().includes(search.toLowerCase()) || 
+                           a.roll_number?.toLowerCase().includes(search.toLowerCase()) || 
+                           a.company_name?.toLowerCase().includes(search.toLowerCase());
+        const matchStatus = filterStatus === 'all' || a.application_status === filterStatus;
+        const matchDrive = filterDrive === 'all' || a.company_name === filterDrive;
         return matchSearch && matchStatus && matchDrive;
     });
 
-    const updateStatus = (id, newStatus) => setApplications(prev => prev.map(a => a.id === id ? { ...a, status: newStatus } : a));
+    const updateStatus = async (id, newStatus) => {
+        setUpdating(id);
+        try {
+            await updateApplicationStatus(id, newStatus);
+            // Update local state only after API success
+            setApplications(prev =>
+                prev.map(a => a.application_id === id ? { ...a, application_status: newStatus } : a)
+            );
+        } catch (err) {
+            console.error('Status update failed:', err.message);
+            alert(`Failed to update status: ${err.message}`);
+        } finally {
+            setUpdating(null);
+        }
+    };
 
-    const drives = [...new Set(allApplications.map(a => a.company))];
-    const counts = { all: applications.length, shortlisted: applications.filter(a => a.status === 'shortlisted').length, selected: applications.filter(a => a.status === 'selected').length, applied: applications.filter(a => a.status === 'applied').length };
+    const drives = [...new Set(applications.map(a => a.company_name))];
+    const counts = { 
+        all: applications.length, 
+        shortlisted: applications.filter(a => a.application_status === 'Shortlisted').length, 
+        selected: applications.filter(a => a.application_status === 'Selected').length, 
+        applied: applications.filter(a => a.application_status === 'Pending').length 
+    };
 
     return (
         <div className="dashboard-layout">
-            <Sidebar role="officer" user={{ name: 'Dr. S. Krishnan', id: 'ID: PO-001' }} />
+            <Sidebar role="officer" user={{ name: officer?.full_name || 'Officer', id: `ID: ${officer?.employee_id || ''}` }} />
             <main className="dashboard-main">
                 <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
@@ -101,43 +131,55 @@ export default function ApplicationsManagement() {
                         </thead>
                         <tbody>
                             {filtered.map(a => (
-                                <tr key={a.id}>
+                                <tr key={a.application_id}>
                                     <td>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                            <div className="avatar-placeholder" style={{ width: 36, height: 36, fontSize: 13 }}>{a.name[0]}</div>
+                                            <div className="avatar-placeholder" style={{ width: 36, height: 36, fontSize: 13 }}>{a.full_name?.[0] || 'S'}</div>
                                             <div>
-                                                <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 14 }}>{a.name}</div>
-                                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{a.date}</div>
+                                                <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 14 }}>{a.full_name || 'Student Name'}</div>
+                                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{new Date(a.applied_date).toLocaleDateString()}</div>
                                             </div>
                                         </div>
                                     </td>
                                     <td>
-                                        <div style={{ fontFamily: 'monospace', fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>{a.roll}</div>
-                                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{a.branch} • {a.year} Yr</div>
+                                        <div style={{ fontFamily: 'monospace', fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>{a.roll_number || 'Roll No'}</div>
+                                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{a.branch || 'N/A'} • {a.year || 'N/A'} Yr</div>
                                     </td>
-                                    <td><span style={{ fontWeight: 800, color: a.cgpa >= 8 ? 'var(--secondary)' : a.cgpa >= 7 ? 'var(--accent2)' : 'var(--accent)', fontSize: 15 }}>{a.cgpa}</span></td>
-                                    <td><span className={`badge ${a.backlogs === 0 ? 'badge-success' : a.backlogs <= 1 ? 'badge-warning' : 'badge-danger'}`}>{a.backlogs}</span></td>
+                                    <td><span style={{ fontWeight: 800, color: a.percentage >= 8 ? 'var(--secondary)' : a.percentage >= 7 ? 'var(--accent2)' : 'var(--accent)', fontSize: 15 }}>{a.percentage || 'N/A'}</span></td>
+                                    <td><span className={`badge ${a.backlogs === 0 ? 'badge-success' : a.backlogs <= 1 ? 'badge-warning' : 'badge-danger'}`}>{a.backlogs || 0}</span></td>
                                     <td>
-                                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{a.company}</div>
-                                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{a.role}</div>
+                                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{a.company_name || 'Company'}</div>
+                                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{a.job_role || 'Role'}</div>
                                     </td>
                                     <td>
-                                        {a.eligible
+                                        {a.eligibility_verified
                                             ? <span className="badge badge-success"><FiCheckCircle /> Eligible</span>
                                             : <span className="badge badge-danger"><FiXCircle /> Invalid</span>}
                                     </td>
-                                    <td><span className={`badge ${statusConfig[a.status].cls}`}>{statusConfig[a.status].icon} {statusConfig[a.status].label}</span></td>
+                                    <td><span className={`badge ${statusConfig[a.application_status]?.cls}`}>{statusConfig[a.application_status]?.icon} {statusConfig[a.application_status]?.label}</span></td>
                                     <td>
                                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                             <button className="btn btn-secondary btn-sm"><FiEye /></button>
-                                            {a.status === 'applied' && (
+                                            {a.application_status === 'Pending' && (
                                                 <>
-                                                    <button className="btn btn-success btn-sm" onClick={() => updateStatus(a.id, 'shortlisted')}>Shortlist</button>
-                                                    <button className="btn btn-danger btn-sm" onClick={() => updateStatus(a.id, 'rejected')}>Reject</button>
+                                                    <button className="btn btn-success btn-sm"
+                                                        disabled={updating === a.application_id}
+                                                        onClick={() => updateStatus(a.application_id, 'Shortlisted')}>
+                                                        {updating === a.application_id ? '...' : 'Shortlist'}
+                                                    </button>
+                                                    <button className="btn btn-danger btn-sm"
+                                                        disabled={updating === a.application_id}
+                                                        onClick={() => updateStatus(a.application_id, 'Rejected')}>
+                                                        {updating === a.application_id ? '...' : 'Reject'}
+                                                    </button>
                                                 </>
                                             )}
-                                            {a.status === 'shortlisted' && (
-                                                <button className="btn btn-primary btn-sm" onClick={() => updateStatus(a.id, 'selected')}>Select ✓</button>
+                                            {a.application_status === 'Shortlisted' && (
+                                                <button className="btn btn-primary btn-sm"
+                                                    disabled={updating === a.application_id}
+                                                    onClick={() => updateStatus(a.application_id, 'Selected')}>
+                                                    {updating === a.application_id ? '...' : 'Select ✓'}
+                                                </button>
                                             )}
                                         </div>
                                     </td>

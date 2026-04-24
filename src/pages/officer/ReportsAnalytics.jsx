@@ -38,7 +38,7 @@ export default function ReportsAnalytics() {
 
     return (
         <div className="dashboard-layout">
-            <Sidebar role="officer" user={{ name: 'Dr. S. Krishnan', id: 'ID: PO-001' }} />
+            <Sidebar role="officer" user={{ name: 'Dr. M.Rajaiah', id: 'ID: PO-001' }} />
             <main className="dashboard-main">
                 <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>

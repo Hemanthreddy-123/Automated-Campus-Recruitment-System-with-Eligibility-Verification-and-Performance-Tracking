@@ -70,6 +70,7 @@ export const getMyApplications = () => api.get('/student/applications');
 
 // Drives
 export const getAllDrives = () => api.get('/drives');
+export const getDrives = () => api.get('/drives'); // Alias for consistency
 export const getDrive = (id) => api.get(`/drives/${id}`);
 export const createDrive = (data) => api.post('/drives/create', data);
 export const updateDrive = (id, data) => api.put(`/drives/${id}`, data);
@@ -85,8 +86,11 @@ export const updateApplicationStatus = (id, status, notes = '') =>
     api.put(`/applications/${id}/status`, { status, officer_notes: notes });
 export const getAllStudents = (params = {}) => {
     const qs = new URLSearchParams(params).toString();
-    return api.get(`/all-students${qs ? '?' + qs : ''}`);
+    return api.get(`/applications/all-students${qs ? '?' + qs : ''}`);
 };
+
+// Student Stats (for officer dashboard)
+export const getStudentStats = () => api.get('/applications/all-students');
 
 // Quiz
 export const startQuiz = () => api.post('/quiz/start', {});

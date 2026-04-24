@@ -1,0 +1,438 @@
+{
+  "info": {
+    "name": "CampusHire API",
+    "description": "Complete API collection for Campus Recruitment System. Base URL: http://localhost:5000/api\n\nFlow:\n1. Login (Student or Officer) → copy token\n2. Set 'token' variable in collection → all auth requests auto-use it",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base", "value": "http://localhost:5000/api" },
+    { "key": "token", "value": "PASTE_JWT_TOKEN_HERE" },
+    { "key": "drive_id", "value": "1" },
+    { "key": "application_id", "value": "1" },
+    { "key": "problem_id", "value": "1" }
+  ],
+  "item": [
+
+    {
+      "name": "🔐 Auth",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/health",
+            "description": "Check if server is running"
+          }
+        },
+        {
+          "name": "Register - Student",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"student\",\n  \"full_name\": \"Test Student\",\n  \"email\": \"test@campus.edu\",\n  \"password\": \"Test@1234\",\n  \"mobile_number\": \"9876543210\",\n  \"roll_number\": \"22G21A0599\",\n  \"branch\": \"Computer Science Engineering\",\n  \"year\": 4,\n  \"percentage\": 78.5,\n  \"backlogs\": 0\n}"
+            }
+          }
+        },
+        {
+          "name": "Register - Officer",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"officer\",\n  \"full_name\": \"Placement Officer\",\n  \"email\": \"officer2@campus.edu\",\n  \"password\": \"Test@1234\",\n  \"mobile_number\": \"9876543211\",\n  \"employee_id\": \"PO-002\",\n  \"department\": \"Training & Placement\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login - Student (Email)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data.token) {",
+                  "  pm.collectionVariables.set('token', res.data.token);",
+                  "  console.log('Token saved:', res.data.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"22G21A0575\",\n  \"password\": \"22G21A0575\",\n  \"role\": \"student\"\n}"
+            },
+            "description": "Login with Regd.No as both email and password (seeded students)"
+          }
+        },
+        {
+          "name": "Login - Student (Regd No)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data.token) {",
+                  "  pm.collectionVariables.set('token', res.data.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"22G21A0575\",\n  \"password\": \"22G21A0575\",\n  \"role\": \"student\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login - Officer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data.token) {",
+                  "  pm.collectionVariables.set('token', res.data.token);",
+                  "  console.log('Officer token saved');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"officer@campus.edu\",\n  \"password\": \"Test@1234\",\n  \"role\": \"officer\"\n}"
+            }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "👨‍🎓 Student",
+      "item": [
+        {
+          "name": "Get My Profile",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/student/profile",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Returns student profile + performance summary + application counts"
+          }
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PUT",
+            "url": "{{base}}/student/update",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"full_name\": \"Updated Name\",\n  \"mobile_number\": \"9999999999\",\n  \"branch\": \"Computer Science Engineering\",\n  \"year\": 4,\n  \"percentage\": 80.0,\n  \"backlogs\": 0\n}"
+            }
+          }
+        },
+        {
+          "name": "Get My Applications",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/student/applications",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "All drives this student has applied to"
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "💼 Job Drives",
+      "item": [
+        {
+          "name": "Get All Active Drives",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/drives",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "If student token → includes is_eligible and applied status per drive"
+          }
+        },
+        {
+          "name": "Get Drive by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/drives/{{drive_id}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        },
+        {
+          "name": "Create Drive (Officer)",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/drives/create",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"TCS\",\n  \"job_role\": \"Software Engineer\",\n  \"description\": \"Full stack development role\",\n  \"package_lpa\": 7.5,\n  \"location\": \"Hyderabad\",\n  \"required_percentage\": 60,\n  \"allowed_backlogs\": 0,\n  \"required_branch\": \"Computer Science Engineering,Information Technology\",\n  \"required_year\": \"4\",\n  \"available_seats\": 50,\n  \"number_of_rounds\": 3,\n  \"drive_date\": \"2026-05-15\",\n  \"last_date\": \"2026-05-10\"\n}"
+            },
+            "description": "Officer only. required_branch can be comma-separated string or array"
+          }
+        },
+        {
+          "name": "Update Drive (Officer)",
+          "request": {
+            "method": "PUT",
+            "url": "{{base}}/drives/{{drive_id}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"package_lpa\": 8.5,\n  \"available_seats\": 60,\n  \"last_date\": \"2026-05-12\",\n  \"is_active\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Deactivate Drive (Officer)",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base}}/drives/{{drive_id}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Soft delete — sets is_active = false"
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "📋 Applications",
+      "item": [
+        {
+          "name": "Apply for Drive (Student)",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/apply",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"drive_id\": {{drive_id}}\n}"
+            },
+            "description": "Auto-checks eligibility. Returns 403 if not eligible, 409 if already applied"
+          }
+        },
+        {
+          "name": "Get All Applications (Officer)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base}}/applications",
+              "host": ["{{base}}"],
+              "path": ["applications"],
+              "query": [
+                { "key": "drive_id", "value": "1", "disabled": true },
+                { "key": "status", "value": "Pending", "disabled": true },
+                { "key": "search", "value": "22G21A", "disabled": true }
+              ]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Officer only. Optional query params: drive_id, status (Pending/Shortlisted/Selected/Rejected), search"
+          }
+        },
+        {
+          "name": "Update Application Status (Officer)",
+          "request": {
+            "method": "PUT",
+            "url": "{{base}}/applications/{{application_id}}/status",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"Shortlisted\",\n  \"officer_notes\": \"Good profile, proceed to round 2\"\n}"
+            },
+            "description": "status: Pending | Shortlisted | Selected | Rejected"
+          }
+        },
+        {
+          "name": "Get All Students (Officer)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base}}/applications/all-students",
+              "host": ["{{base}}"],
+              "path": ["applications", "all-students"],
+              "query": [
+                { "key": "branch", "value": "Computer Science Engineering", "disabled": true },
+                { "key": "search", "value": "22G21A", "disabled": true },
+                { "key": "placed", "value": "false", "disabled": true }
+              ]
+            },
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Officer only. Optional: branch, search, placed (true/false)"
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "📝 Quiz",
+      "item": [
+        {
+          "name": "Start Quiz",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/quiz/start",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Returns 10 questions WITHOUT answers. 15 min time limit"
+          }
+        },
+        {
+          "name": "Submit Quiz",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/quiz/submit",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answers\": [\n    { \"question_id\": 1, \"selected_option\": 1 },\n    { \"question_id\": 2, \"selected_option\": 1 },\n    { \"question_id\": 3, \"selected_option\": 0 },\n    { \"question_id\": 4, \"selected_option\": 0 },\n    { \"question_id\": 5, \"selected_option\": 2 },\n    { \"question_id\": 6, \"selected_option\": 1 },\n    { \"question_id\": 7, \"selected_option\": 1 },\n    { \"question_id\": 8, \"selected_option\": 2 },\n    { \"question_id\": 9, \"selected_option\": 0 },\n    { \"question_id\": 10, \"selected_option\": 2 }\n  ],\n  \"time_taken\": 540,\n  \"quiz_name\": \"General Aptitude & Technical Quiz\"\n}"
+            },
+            "description": "All 10 correct answers included above (score = 100). time_taken in seconds"
+          }
+        },
+        {
+          "name": "Get Quiz History",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/quiz/history",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "💻 Coding",
+      "item": [
+        {
+          "name": "Start Contest",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/coding/start",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Returns 5 problems list (without starter code). 90 min contest"
+          }
+        },
+        {
+          "name": "Get Problem by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/coding/problem/{{problem_id}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Returns full problem with starter code. problem_id: 1-5"
+          }
+        },
+        {
+          "name": "Submit Code",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/coding/submit",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"problem_id\": 1,\n  \"language\": \"python\",\n  \"code\": \"def two_sum(nums, target):\\n    seen = {}\\n    for i, n in enumerate(nums):\\n        if target - n in seen:\\n            return [seen[target - n], i]\\n        seen[n] = i\",\n  \"contest_name\": \"Campus Coding Championship\"\n}"
+            },
+            "description": "language: python | java. Score is simulated based on code content"
+          }
+        },
+        {
+          "name": "Get Leaderboard",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/coding/leaderboard",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Top 20 students by total coding score. Accessible by any logged-in user"
+          }
+        },
+        {
+          "name": "Get Coding History",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/coding/history",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }]
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "📊 Reports",
+      "item": [
+        {
+          "name": "Placement Analytics (Officer)",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/reports/analytics",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Summary + branch stats + drive stats + top 10 students. Officer only"
+          }
+        },
+        {
+          "name": "All Students Performance (Officer)",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/reports/performance",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Full performance table with computed ranks. Officer only"
+          }
+        },
+        {
+          "name": "My Performance (Student)",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/reports/my-performance",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "description": "Student's own quiz history, coding history, application history"
+          }
+        }
+      ]
+    }
+
+  ]
+}

@@ -1,26 +1,33 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Sidebar from '../../components/Sidebar';
 import { FiSearch, FiPlus, FiEdit2, FiTrash2, FiEye, FiDownload, FiUser, FiFilter } from 'react-icons/fi';
-
-const initialStudents = [
-    { id: 1, name: 'Priya Patel', roll: '21CS012', branch: 'CS', year: '4th', cgpa: 9.1, backlogs: 0, placed: true, email: 'priya@college.edu', mobile: '9876543001', status: 'selected' },
-    { id: 2, name: 'Arjun Mehta', roll: '21CS047', branch: 'CS', year: '4th', cgpa: 8.4, backlogs: 0, placed: false, email: 'arjun@college.edu', mobile: '9876543002', status: 'applied' },
-    { id: 3, name: 'Sneha Reddy', roll: '21IT023', branch: 'IT', year: '4th', cgpa: 8.8, backlogs: 0, placed: true, email: 'sneha@college.edu', mobile: '9876543003', status: 'selected' },
-    { id: 4, name: 'Rahul Sharma', roll: '21CS031', branch: 'CS', year: '4th', cgpa: 7.2, backlogs: 1, placed: false, email: 'rahul@college.edu', mobile: '9876543004', status: 'applied' },
-    { id: 5, name: 'Kavya Singh', roll: '21IT045', branch: 'IT', year: '4th', cgpa: 8.6, backlogs: 0, placed: false, email: 'kavya@college.edu', mobile: '9876543005', status: 'shortlisted' },
-    { id: 6, name: 'Dev Patel', roll: '21ECE012', branch: 'ECE', year: '4th', cgpa: 6.9, backlogs: 2, placed: false, email: 'dev@college.edu', mobile: '9876543006', status: 'not_applied' },
-    { id: 7, name: 'Riya Sharma', roll: '21CS088', branch: 'CS', year: '4th', cgpa: 9.4, backlogs: 0, placed: true, email: 'riya@college.edu', mobile: '9876543007', status: 'selected' },
-    { id: 8, name: 'Amit Kumar', roll: '21ME033', branch: 'ME', year: '4th', cgpa: 6.5, backlogs: 0, placed: false, email: 'amit@college.edu', mobile: '9876543008', status: 'not_applied' },
-];
+import { getAllStudents } from '../../services/api';
 
 export default function StudentManagement() {
-    const [students, setStudents] = useState(initialStudents);
+    const [students, setStudents] = useState([]);
+    const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
     const [filterBranch, setFilterBranch] = useState('all');
     const [showAdd, setShowAdd] = useState(false);
     const [editId, setEditId] = useState(null);
     const [viewId, setViewId] = useState(null);
-    const [form, setForm] = useState({ name: '', roll: '', branch: 'CS', year: '4th', cgpa: '', backlogs: '0', email: '', mobile: '' });
+    const [form, setForm] = useState({ full_name: '', roll_number: '', branch: 'Computer Science', year: '4', percentage: '', backlogs: '0', email: '', mobile_number: '' });
+
+    useEffect(() => {
+        fetchStudents();
+    }, []);
+
+    const fetchStudents = async () => {
+        try {
+            setLoading(true);
+            const response = await getAllStudents();
+            setStudents(response.data || []);
+        } catch (error) {
+            console.error('Error fetching students:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const handleChange = e => setForm({ ...form, [e.target.name]: e.target.value });
 
@@ -40,19 +47,21 @@ export default function StudentManagement() {
     const handleDelete = (id) => setStudents(prev => prev.filter(s => s.id !== id));
 
     const filtered = students.filter(s => {
-        const m = s.name.toLowerCase().includes(search.toLowerCase()) || s.roll.toLowerCase().includes(search.toLowerCase()) || s.email.toLowerCase().includes(search.toLowerCase());
+        const m = s.full_name?.toLowerCase().includes(search.toLowerCase()) || 
+                s.roll_number?.toLowerCase().includes(search.toLowerCase()) || 
+                s.email?.toLowerCase().includes(search.toLowerCase());
         const b = filterBranch === 'all' || s.branch === filterBranch;
         return m && b;
     });
 
-    const branches = ['CS', 'IT', 'ECE', 'EE', 'ME', 'CE'];
+    const branches = ['Computer Science', 'Information Technology', 'Electronics', 'Electrical', 'Mechanical', 'Civil'];
     const placedCount = students.filter(s => s.placed).length;
 
-    const viewStudent = students.find(s => s.id === viewId);
+    const viewStudent = students.find(s => s.student_id === viewId);
 
     return (
         <div className="dashboard-layout">
-            <Sidebar role="officer" user={{ name: 'Dr. S. Krishnan', id: 'ID: PO-001' }} />
+            <Sidebar role="officer" user={{ name: 'Dr. M.Rajaiah', id: 'ID: PO-001' }} />
             <main className="dashboard-main">
                 <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
@@ -69,8 +78,8 @@ export default function StudentManagement() {
                 <div className="stats-grid" style={{ marginBottom: 24 }}>
                     {[
                         { label: 'Total Students', value: students.length, icon: '👥' },
-                        { label: 'Placed', value: placedCount, icon: '🏆' },
-                        { label: 'High CGPA (≥8)', value: students.filter(s => s.cgpa >= 8).length, icon: '⭐' },
+                        { label: 'Placed', value: students.filter(s => s.placed).length, icon: '🏆' },
+                        { label: 'High CGPA (≥8)', value: students.filter(s => s.percentage >= 8).length, icon: '⭐' },
                         { label: 'No Backlogs', value: students.filter(s => s.backlogs === 0).length, icon: '✅' },
                     ].map((s, i) => (
                         <div key={i} className="stat-card">
@@ -108,30 +117,30 @@ export default function StudentManagement() {
                         </thead>
                         <tbody>
                             {filtered.map(s => (
-                                <tr key={s.id}>
+                                <tr key={s.student_id}>
                                     <td>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                            <div className="avatar-placeholder" style={{ width: 36, height: 36, fontSize: 13 }}>{s.name[0]}</div>
+                                            <div className="avatar-placeholder" style={{ width: 36, height: 36, fontSize: 13 }}>{s.full_name?.[0] || 'S'}</div>
                                             <div>
-                                                <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 14 }}>{s.name}</div>
-                                                <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{s.roll}</div>
+                                                <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 14 }}>{s.full_name || 'Student Name'}</div>
+                                                <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{s.roll_number || 'Roll No'}</div>
                                             </div>
                                         </div>
                                     </td>
-                                    <td><span style={{ fontWeight: 600 }}>{s.branch}</span> • {s.year} Yr</td>
-                                    <td><span style={{ fontWeight: 800, fontSize: 15, color: s.cgpa >= 8 ? 'var(--secondary)' : s.cgpa >= 7 ? 'var(--accent2)' : 'var(--accent)' }}>{s.cgpa}</span></td>
-                                    <td><span className={`badge ${s.backlogs === 0 ? 'badge-success' : s.backlogs <= 1 ? 'badge-warning' : 'badge-danger'}`}>{s.backlogs}</span></td>
+                                    <td><span style={{ fontWeight: 600 }}>{s.branch || 'N/A'}</span> • {s.year || 'N/A'} Yr</td>
+                                    <td><span style={{ fontWeight: 800, fontSize: 15, color: s.percentage >= 8 ? 'var(--secondary)' : s.percentage >= 7 ? 'var(--accent2)' : 'var(--accent)' }}>{s.percentage || 'N/A'}</span></td>
+                                    <td><span className={`badge ${s.backlogs === 0 ? 'badge-success' : s.backlogs <= 1 ? 'badge-warning' : 'badge-danger'}`}>{s.backlogs || 0}</span></td>
                                     <td>{s.placed ? <span className="badge badge-success">Placed 🎉</span> : <span className="badge badge-muted">Not Yet</span>}</td>
                                     <td>
                                         <div className="progress-bar-container" style={{ width: 80 }}>
-                                            <div className={`progress-bar-fill ${s.cgpa >= 8 ? 'success' : s.cgpa >= 7 ? 'warning' : 'danger'}`} style={{ width: `${(s.cgpa / 10) * 100}%` }} />
+                                            <div className={`progress-bar-fill ${s.percentage >= 8 ? 'success' : s.percentage >= 7 ? 'warning' : 'danger'}`} style={{ width: `${(s.percentage / 10) * 100}%` }} />
                                         </div>
                                     </td>
                                     <td>
                                         <div style={{ display: 'flex', gap: 6 }}>
-                                            <button className="btn btn-secondary btn-sm" onClick={() => setViewId(s.id)}><FiEye /></button>
+                                            <button className="btn btn-secondary btn-sm" onClick={() => setViewId(s.student_id)}><FiEye /></button>
                                             <button className="btn btn-outline btn-sm" onClick={() => handleEdit(s)}><FiEdit2 /></button>
-                                            <button className="btn btn-danger btn-sm" onClick={() => handleDelete(s.id)}><FiTrash2 /></button>
+                                            <button className="btn btn-danger btn-sm" onClick={() => handleDelete(s.student_id)}><FiTrash2 /></button>
                                         </div>
                                     </td>
                                 </tr>
@@ -187,17 +196,17 @@ export default function StudentManagement() {
                                 <button className="btn btn-outline btn-sm btn-icon" onClick={() => setViewId(null)}>✕</button>
                             </div>
                             <div style={{ textAlign: 'center', marginBottom: 24 }}>
-                                <div className="avatar-placeholder" style={{ width: 64, height: 64, fontSize: 26, margin: '0 auto 12px' }}>{viewStudent.name[0]}</div>
-                                <h3 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 20, fontWeight: 700 }}>{viewStudent.name}</h3>
-                                <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>{viewStudent.roll} · {viewStudent.branch} · {viewStudent.year} Year</p>
+                                <div className="avatar-placeholder" style={{ width: 64, height: 64, fontSize: 26, margin: '0 auto 12px' }}>{viewStudent.full_name?.[0] || 'S'}</div>
+                                <h3 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 20, fontWeight: 700 }}>{viewStudent.full_name}</h3>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>{viewStudent.roll_number} · {viewStudent.branch} · {viewStudent.year} Year</p>
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                                 {[
                                     { label: 'Email', value: viewStudent.email },
-                                    { label: 'Mobile', value: viewStudent.mobile },
-                                    { label: 'CGPA', value: viewStudent.cgpa },
+                                    { label: 'Mobile', value: viewStudent.mobile_number },
+                                    { label: 'CGPA', value: viewStudent.percentage },
                                     { label: 'Backlogs', value: viewStudent.backlogs },
-                                    { label: 'Placement Status', value: viewStudent.placed ? '✅ Placed' : '⏳ Not Placed Yet' },
+                                    { label: 'Placement Status', value: viewStudent.is_placed ? '✅ Placed' : '⏳ Not Placed Yet' },
                                 ].map((item, i) => (
                                     <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: i < 4 ? '1px solid var(--border)' : 'none' }}>
                                         <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{item.label}</span>
