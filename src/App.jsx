@@ -45,3 +45,77 @@ function App() {
 }
 
 export default App;
+import { useEffect } from "react";
+
+function App() {
+
+  useEffect(() => {
+    fetch("http://localhost:5000/students")
+      .then(res => res.json())
+      .then(data => {
+        console.log("Students:", data);
+      });
+  }, []);
+
+  return <h1>Check console</h1>;
+}
+
+export default App;
+import { useEffect, useState } from "react";
+
+function App() {
+  const [students, setStudents] = useState([]);
+
+  useEffect(() => {
+    fetch("http://localhost:5000/students")
+      .then(res => res.json())
+      .then(data => {
+        console.log(data);
+        setStudents(data);
+      });
+  }, []);
+
+  return (
+    <div>
+      <h1>Students</h1>
+      {students.map((s) => (
+        <p key={s.student_id}>{s.name} - {s.cgpa}</p>
+      ))}
+    </div>
+  );
+}
+
+export default App;
+import { useEffect, useState } from "react";
+
+function App() {
+  const [students, setStudents] = useState([]);
+
+  useEffect(() => {
+    fetch("http://localhost:5000/students")
+      .then(res => res.json())
+      .then(data => {
+        console.log(data);
+        setStudents(data);
+      })
+      .catch(err => console.error(err));
+  }, []);
+
+  return (
+    <div>
+      <h1>Students List</h1>
+
+      {students.length === 0 ? (
+        <p>No data found</p>
+      ) : (
+        students.map((s) => (
+          <div key={s.student_id}>
+            <p>{s.name} - {s.cgpa}</p>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+export default App;
