@@ -1,6 +1,6 @@
-// routes/quiz.js  — Quiz (DB-driven questions)
+// routes/quiz.js  — Quiz (Supabase-driven questions)
 const router = require('express').Router();
-const pool   = require('../config/db');
+const supabase = require('../config/db');
 const { verifyToken, requireStudent } = require('../middleware/auth');
 const { success, error } = require('../utils/helpers');
 
@@ -15,16 +15,17 @@ const TIME_LIMIT_SEC = 900; // 15 min
 // ══════════════════════════════════════════════════════
 router.post('/start', verifyToken, requireStudent, async (req, res) => {
     try {
-        const [rows] = await pool.query(
-            `SELECT question_id, question, options
-             FROM quiz_questions
-             WHERE is_active = TRUE AND quiz_name = ?
-             ORDER BY question_id`,
-            [QUIZ_NAME]
-        );
+        const { data: rows, error: qErr } = await supabase
+            .from('quiz_questions')
+            .select('question_id, question, options')
+            .eq('is_active', true)
+            .eq('quiz_name', QUIZ_NAME)
+            .order('question_id');
 
-        if (!rows.length) {
-            return error(res, 'No questions found. Run migrate_questions.js first.', 404);
+        if (qErr) throw qErr;
+
+        if (!rows || !rows.length) {
+            return error(res, 'No questions found. Please seed quiz_questions table in Supabase.', 404);
         }
 
         const questions = rows.map(q => ({
@@ -54,15 +55,16 @@ router.post('/submit', verifyToken, requireStudent, async (req, res) => {
     const { answers = [], time_taken = 0, quiz_name = QUIZ_NAME } = req.body;
 
     try {
-        // Fetch all active questions with answers
-        const [rows] = await pool.query(
-            `SELECT question_id, question, options, correct_index, explanation
-             FROM quiz_questions WHERE is_active = TRUE AND quiz_name = ?`,
-            [quiz_name]
-        );
+        const { data: rows, error: qErr } = await supabase
+            .from('quiz_questions')
+            .select('question_id, question, options, correct_index, explanation')
+            .eq('is_active', true)
+            .eq('quiz_name', quiz_name);
+
+        if (qErr) throw qErr;
 
         const questionMap = {};
-        rows.forEach(q => {
+        (rows || []).forEach(q => {
             questionMap[q.question_id] = {
                 ...q,
                 options: typeof q.options === 'string' ? JSON.parse(q.options) : q.options,
@@ -80,38 +82,56 @@ router.post('/submit', verifyToken, requireStudent, async (req, res) => {
             if (is_correct) score += MARKS_PER_Q;
 
             review.push({
-                question_id:    q.question_id,
-                question:       q.question,
-                options:        q.options,
+                question_id:     q.question_id,
+                question:        q.question,
+                options:         q.options,
                 selected_option: parseInt(selected_option),
-                correct_option: q.correct_index,
+                correct_option:  q.correct_index,
                 is_correct,
-                explanation:    q.explanation,
+                explanation:     q.explanation,
             });
         });
 
-        const total_marks = rows.length * MARKS_PER_Q;
+        const total_marks = (rows || []).length * MARKS_PER_Q;
         const passed      = score >= PASS_MARK;
 
-        // Save result to quiz_results
-        const [result] = await pool.query(
-            `INSERT INTO quiz_results (student_id, quiz_name, score, total_marks, passed, time_taken)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [req.user.id, quiz_name, score, total_marks, passed, parseInt(time_taken)]
-        );
+        // Save result
+        const { data: result, error: insertErr } = await supabase
+            .from('quiz_results')
+            .insert([{
+                student_id: req.user.id,
+                quiz_name,
+                score,
+                total_marks,
+                passed,
+                time_taken: parseInt(time_taken),
+            }])
+            .select()
+            .single();
+
+        if (insertErr) throw insertErr;
 
         // Update aggregated performance
-        await pool.query(
-            `UPDATE performance
-             SET total_quiz_score = total_quiz_score + ?,
-                 quiz_attempts    = quiz_attempts + 1,
-                 avg_quiz_score   = (total_quiz_score + ?) / (quiz_attempts + 1)
-             WHERE student_id = ?`,
-            [score, score, req.user.id]
-        );
+        const { data: perf } = await supabase
+            .from('performance')
+            .select('total_quiz_score, quiz_attempts')
+            .eq('student_id', req.user.id)
+            .single();
+
+        const newTotal    = (perf?.total_quiz_score || 0) + score;
+        const newAttempts = (perf?.quiz_attempts    || 0) + 1;
+
+        await supabase
+            .from('performance')
+            .upsert([{
+                student_id:      req.user.id,
+                total_quiz_score: newTotal,
+                quiz_attempts:    newAttempts,
+                avg_quiz_score:   newTotal / newAttempts,
+            }], { onConflict: 'student_id' });
 
         return success(res, {
-            quiz_id: result.insertId,
+            quiz_id:    result.quiz_id,
             score,
             total_marks,
             passed,
@@ -130,11 +150,14 @@ router.post('/submit', verifyToken, requireStudent, async (req, res) => {
 // ══════════════════════════════════════════════════════
 router.get('/history', verifyToken, requireStudent, async (req, res) => {
     try {
-        const [rows] = await pool.query(
-            'SELECT * FROM quiz_results WHERE student_id = ? ORDER BY attempt_date DESC',
-            [req.user.id]
-        );
-        return success(res, rows);
+        const { data: rows, error: qErr } = await supabase
+            .from('quiz_results')
+            .select('*')
+            .eq('student_id', req.user.id)
+            .order('attempt_date', { ascending: false });
+
+        if (qErr) throw qErr;
+        return success(res, rows || []);
     } catch (err) {
         return error(res, 'Failed to fetch quiz history', 500, err.message);
     }

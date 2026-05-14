@@ -1,6 +1,6 @@
 // routes/student.js  — Student profile APIs
 const router = require('express').Router();
-const pool = require('../config/db');
+const supabase = require('../config/db');
 const { verifyToken, requireStudent } = require('../middleware/auth');
 const { success, error } = require('../utils/helpers');
 
@@ -13,41 +13,43 @@ router.use(verifyToken, requireStudent);
 // ══════════════════════════════════════════════════════
 router.get('/profile', async (req, res) => {
     try {
-        // 1. Student record (no password)
-        const [studentRows] = await pool.query(
-            `SELECT student_id, full_name, roll_number, email,
-                    mobile_number, branch, year, percentage,
-                    backlogs, profile_complete, created_at
-             FROM students
-             WHERE student_id = ?`,
-            [req.user.id]
-        );
-        if (!studentRows.length) return error(res, 'Student not found', 404);
+        // 1. Student record
+        const { data: student, error: sErr } = await supabase
+            .from('students')
+            .select('student_id, full_name, roll_number, email, mobile_number, branch, year, percentage, backlogs, profile_complete, created_at')
+            .eq('student_id', req.user.id)
+            .single();
+
+        if (sErr || !student) return error(res, 'Student not found', 404);
 
         // 2. Performance record
-        const [perfRows] = await pool.query(
-            `SELECT total_quiz_score, quiz_attempts, avg_quiz_score,
-                    total_coding_score, coding_submissions, overall_rank
-             FROM performance WHERE student_id = ?`,
-            [req.user.id]
-        );
+        const { data: perf } = await supabase
+            .from('performance')
+            .select('total_quiz_score, quiz_attempts, avg_quiz_score, total_coding_score, coding_submissions, overall_rank')
+            .eq('student_id', req.user.id)
+            .single();
 
         // 3. Application counts
-        const [appCounts] = await pool.query(
-            `SELECT
-               COUNT(*) AS total_applications,
-               SUM(CASE WHEN application_status = 'Selected'   THEN 1 ELSE 0 END) AS selected,
-               SUM(CASE WHEN application_status = 'Shortlisted' THEN 1 ELSE 0 END) AS shortlisted,
-               SUM(CASE WHEN application_status = 'Pending'    THEN 1 ELSE 0 END) AS pending,
-               SUM(CASE WHEN application_status = 'Rejected'   THEN 1 ELSE 0 END) AS rejected
-             FROM applications WHERE student_id = ?`,
-            [req.user.id]
-        );
+        const { data: apps } = await supabase
+            .from('applications')
+            .select('application_status')
+            .eq('student_id', req.user.id);
+
+        const app_summary = {
+            total_applications: apps ? apps.length : 0,
+            selected:    apps ? apps.filter(a => a.application_status === 'Selected').length   : 0,
+            shortlisted: apps ? apps.filter(a => a.application_status === 'Shortlisted').length : 0,
+            pending:     apps ? apps.filter(a => a.application_status === 'Pending').length    : 0,
+            rejected:    apps ? apps.filter(a => a.application_status === 'Rejected').length   : 0,
+        };
 
         return success(res, {
-            student: studentRows[0],
-            performance: perfRows[0] || { total_quiz_score: 0, quiz_attempts: 0, avg_quiz_score: 0, total_coding_score: 0, coding_submissions: 0, overall_rank: null },
-            app_summary: appCounts[0],
+            student,
+            performance: perf || {
+                total_quiz_score: 0, quiz_attempts: 0, avg_quiz_score: 0,
+                total_coding_score: 0, coding_submissions: 0, overall_rank: null,
+            },
+            app_summary,
         });
 
     } catch (err) {
@@ -55,7 +57,6 @@ router.get('/profile', async (req, res) => {
         return error(res, 'Failed to fetch profile', 500, err.message);
     }
 });
-
 
 // ══════════════════════════════════════════════════════
 // PUT /api/student/update
@@ -65,31 +66,29 @@ router.put('/update', async (req, res) => {
     const { full_name, mobile_number, branch, year, percentage, backlogs } = req.body;
 
     try {
-        const fields = [];
-        const values = [];
+        const updates = { profile_complete: true };
 
-        if (full_name) { fields.push('full_name = ?'); values.push(full_name); }
-        if (mobile_number) { fields.push('mobile_number = ?'); values.push(mobile_number); }
-        if (branch) { fields.push('branch = ?'); values.push(branch); }
-        if (year !== undefined) { fields.push('year = ?'); values.push(parseInt(year)); }
-        if (percentage !== undefined) { fields.push('percentage = ?'); values.push(parseFloat(percentage)); }
-        if (backlogs !== undefined) { fields.push('backlogs = ?'); values.push(parseInt(backlogs)); }
+        if (full_name)              updates.full_name     = full_name;
+        if (mobile_number)          updates.mobile_number = mobile_number;
+        if (branch)                 updates.branch        = branch;
+        if (year !== undefined)     updates.year          = parseInt(year);
+        if (percentage !== undefined) updates.percentage  = parseFloat(percentage);
+        if (backlogs !== undefined) updates.backlogs      = parseInt(backlogs);
 
-        if (!fields.length) return error(res, 'No fields to update', 400);
+        if (Object.keys(updates).length === 1) {
+            return error(res, 'No fields to update', 400);
+        }
 
-        fields.push('profile_complete = TRUE');
-        values.push(req.user.id);
+        const { data: updated, error: updateErr } = await supabase
+            .from('students')
+            .update(updates)
+            .eq('student_id', req.user.id)
+            .select('student_id, full_name, roll_number, email, mobile_number, branch, year, percentage, backlogs')
+            .single();
 
-        await pool.query(
-            `UPDATE students SET ${fields.join(', ')} WHERE student_id = ?`, values
-        );
+        if (updateErr) throw updateErr;
 
-        const [updated] = await pool.query(
-            'SELECT student_id, full_name, roll_number, email, mobile_number, branch, year, percentage, backlogs FROM students WHERE student_id = ?',
-            [req.user.id]
-        );
-
-        return success(res, updated[0], 'Profile updated successfully');
+        return success(res, updated, 'Profile updated successfully');
     } catch (err) {
         console.error('Profile update error:', err);
         return error(res, 'Failed to update profile', 500, err.message);
@@ -102,17 +101,29 @@ router.put('/update', async (req, res) => {
 // ══════════════════════════════════════════════════════
 router.get('/applications', async (req, res) => {
     try {
-        const [rows] = await pool.query(
-            `SELECT a.application_id, a.application_status, a.applied_date,
-              d.drive_id, d.company_name, d.job_role, d.package_lpa,
-              d.location, d.drive_date, d.last_date
-       FROM applications a
-       JOIN job_drives d ON d.drive_id = a.drive_id
-       WHERE a.student_id = ?
-       ORDER BY a.applied_date DESC`,
-            [req.user.id]
-        );
-        return success(res, rows);
+        const { data: rows, error: qErr } = await supabase
+            .from('applications')
+            .select(`
+                application_id, application_status, applied_date,
+                job_drives (
+                    drive_id, company_name, job_role, package_lpa,
+                    location, drive_date, last_date
+                )
+            `)
+            .eq('student_id', req.user.id)
+            .order('applied_date', { ascending: false });
+
+        if (qErr) throw qErr;
+
+        // Flatten nested join
+        const flat = (rows || []).map(r => ({
+            application_id:     r.application_id,
+            application_status: r.application_status,
+            applied_date:       r.applied_date,
+            ...r.job_drives,
+        }));
+
+        return success(res, flat);
     } catch (err) {
         console.error('Applications fetch error:', err);
         return error(res, 'Failed to fetch applications', 500, err.message);

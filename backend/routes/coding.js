@@ -1,17 +1,20 @@
-// routes/coding.js  — Coding competition (DB-driven problems)
+// routes/coding.js  — Coding competition (Supabase-driven problems)
 const router = require('express').Router();
-const pool   = require('../config/db');
+const supabase = require('../config/db');
 const { verifyToken, requireStudent } = require('../middleware/auth');
 const { success, error } = require('../utils/helpers');
 
-// ── Helper: fetch one problem from DB ────────────────────────
+// ── Helper: fetch one problem from Supabase ──────────────────
 async function fetchProblem(id) {
-    const [rows] = await pool.query(
-        'SELECT * FROM coding_problems WHERE problem_id = ? AND is_active = TRUE',
-        [id]
-    );
-    if (!rows.length) return null;
-    const p = rows[0];
+    const { data: p, error: pErr } = await supabase
+        .from('coding_problems')
+        .select('*')
+        .eq('problem_id', id)
+        .eq('is_active', true)
+        .single();
+
+    if (pErr || !p) return null;
+
     return {
         id:          p.problem_id,
         title:       p.title,
@@ -33,12 +36,15 @@ async function fetchProblem(id) {
 // ══════════════════════════════════════════════════════
 router.post('/start', verifyToken, requireStudent, async (req, res) => {
     try {
-        const [rows] = await pool.query(
-            `SELECT problem_id, title, difficulty, max_score, description, examples, constraints
-             FROM coding_problems WHERE is_active = TRUE ORDER BY problem_id`
-        );
+        const { data: rows, error: qErr } = await supabase
+            .from('coding_problems')
+            .select('problem_id, title, difficulty, max_score, description, examples, constraints')
+            .eq('is_active', true)
+            .order('problem_id');
 
-        const problems = rows.map(p => ({
+        if (qErr) throw qErr;
+
+        const problems = (rows || []).map(p => ({
             id:          p.problem_id,
             title:       p.title,
             difficulty:  p.difficulty,
@@ -49,9 +55,9 @@ router.post('/start', verifyToken, requireStudent, async (req, res) => {
         }));
 
         return success(res, {
-            contest_name:    'Campus Coding Championship',
+            contest_name:     'Campus Coding Championship',
             duration_minutes: 90,
-            total_problems:  problems.length,
+            total_problems:   problems.length,
             problems,
         }, 'Contest started');
     } catch (err) {
@@ -79,7 +85,12 @@ router.get('/problem/:id', verifyToken, requireStudent, async (req, res) => {
 // Body: { problem_id, language, code, contest_name }
 // ══════════════════════════════════════════════════════
 router.post('/submit', verifyToken, requireStudent, async (req, res) => {
-    const { problem_id, language = 'python', code = '', contest_name = 'Campus Coding Championship' } = req.body;
+    const {
+        problem_id,
+        language     = 'python',
+        code         = '',
+        contest_name = 'Campus Coding Championship',
+    } = req.body;
 
     if (!problem_id || !code.trim()) {
         return error(res, 'problem_id and code are required', 400);
@@ -95,23 +106,39 @@ router.post('/submit', verifyToken, requireStudent, async (req, res) => {
         const totalTests  = 5;
         const score       = Math.round((testsPassed / totalTests) * problem.max_score);
 
-        const [result] = await pool.query(
-            `INSERT INTO coding_results
-                (student_id, contest_name, problem_id, problem_title, score, max_score, language)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [req.user.id, contest_name, problem_id, problem.title, score, problem.max_score, language]
-        );
+        const { data: result, error: insertErr } = await supabase
+            .from('coding_results')
+            .insert([{
+                student_id:    req.user.id,
+                contest_name,
+                problem_id,
+                problem_title: problem.title,
+                score,
+                max_score:     problem.max_score,
+                language,
+            }])
+            .select()
+            .single();
 
-        await pool.query(
-            `UPDATE performance
-             SET total_coding_score = total_coding_score + ?,
-                 coding_submissions = coding_submissions + 1
-             WHERE student_id = ?`,
-            [score, req.user.id]
-        );
+        if (insertErr) throw insertErr;
+
+        // Update aggregated performance
+        const { data: perf } = await supabase
+            .from('performance')
+            .select('total_coding_score, coding_submissions')
+            .eq('student_id', req.user.id)
+            .single();
+
+        await supabase
+            .from('performance')
+            .upsert([{
+                student_id:         req.user.id,
+                total_coding_score: (perf?.total_coding_score || 0) + score,
+                coding_submissions: (perf?.coding_submissions || 0) + 1,
+            }], { onConflict: 'student_id' });
 
         return success(res, {
-            coding_id:    result.insertId,
+            coding_id:    result.coding_id,
             problem_id,
             score,
             max_score:    problem.max_score,
@@ -131,15 +158,25 @@ router.post('/submit', verifyToken, requireStudent, async (req, res) => {
 // ══════════════════════════════════════════════════════
 router.get('/leaderboard', verifyToken, async (req, res) => {
     try {
-        const [rows] = await pool.query(
-            `SELECT s.student_id, s.full_name, s.roll_number, s.branch,
-                    p.total_coding_score, p.coding_submissions, p.overall_rank
-             FROM performance p
-             JOIN students s ON s.student_id = p.student_id
-             ORDER BY p.total_coding_score DESC
-             LIMIT 20`
-        );
-        return success(res, rows);
+        const { data: rows, error: qErr } = await supabase
+            .from('performance')
+            .select(`
+                total_coding_score, coding_submissions, overall_rank,
+                students (student_id, full_name, roll_number, branch)
+            `)
+            .order('total_coding_score', { ascending: false })
+            .limit(20);
+
+        if (qErr) throw qErr;
+
+        const flat = (rows || []).map(r => ({
+            ...r.students,
+            total_coding_score: r.total_coding_score,
+            coding_submissions: r.coding_submissions,
+            overall_rank:       r.overall_rank,
+        }));
+
+        return success(res, flat);
     } catch (err) {
         return error(res, 'Failed to fetch leaderboard', 500, err.message);
     }
@@ -150,11 +187,14 @@ router.get('/leaderboard', verifyToken, async (req, res) => {
 // ══════════════════════════════════════════════════════
 router.get('/history', verifyToken, requireStudent, async (req, res) => {
     try {
-        const [rows] = await pool.query(
-            'SELECT * FROM coding_results WHERE student_id = ? ORDER BY submission_time DESC',
-            [req.user.id]
-        );
-        return success(res, rows);
+        const { data: rows, error: qErr } = await supabase
+            .from('coding_results')
+            .select('*')
+            .eq('student_id', req.user.id)
+            .order('submission_time', { ascending: false });
+
+        if (qErr) throw qErr;
+        return success(res, rows || []);
     } catch (err) {
         return error(res, 'Failed to fetch coding history', 500, err.message);
     }

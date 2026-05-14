@@ -1,47 +1,73 @@
 // routes/applications.js  — Apply for drives + Officer management
 const router = require('express').Router();
-const pool = require('../config/db');
+const supabase = require('../config/db');
 const { verifyToken, requireStudent, requireOfficer } = require('../middleware/auth');
 const { success, error, checkEligibility } = require('../utils/helpers');
 
 // ══════════════════════════════════════════════════════
 // POST /api/apply   (Student)
 // Body: { drive_id }
-// Auto-applies eligibility check before inserting
 // ══════════════════════════════════════════════════════
 router.post('/apply', verifyToken, requireStudent, async (req, res) => {
     const { drive_id } = req.body;
     if (!drive_id) return error(res, 'drive_id is required', 400);
 
     try {
-        // 1. Get student & drive
-        const [[student]] = await pool.query('SELECT * FROM students WHERE student_id = ?', [req.user.id]);
-        const [[drive]] = await pool.query('SELECT * FROM job_drives WHERE drive_id = ? AND is_active = TRUE AND last_date >= CURDATE()', [drive_id]);
+        const today = new Date().toISOString().split('T')[0];
 
-        if (!drive) return error(res, 'Drive not found or deadline passed', 404);
-        if (!student) return error(res, 'Student not found', 404);
+        // 1. Get student
+        const { data: student, error: sErr } = await supabase
+            .from('students')
+            .select('*')
+            .eq('student_id', req.user.id)
+            .single();
+        if (sErr || !student) return error(res, 'Student not found', 404);
 
-        // 2. Duplicate application check
-        const [existing] = await pool.query(
-            'SELECT application_id FROM applications WHERE student_id = ? AND drive_id = ?',
-            [req.user.id, drive_id]
-        );
-        if (existing.length) return error(res, 'You have already applied for this drive', 409);
+        // 2. Get drive
+        const { data: drive, error: dErr } = await supabase
+            .from('job_drives')
+            .select('*')
+            .eq('drive_id', drive_id)
+            .eq('is_active', true)
+            .gte('last_date', today)
+            .single();
+        if (dErr || !drive) return error(res, 'Drive not found or deadline passed', 404);
 
-        // 3. Eligibility check
+        // 3. Duplicate check
+        const { data: existing } = await supabase
+            .from('applications')
+            .select('application_id')
+            .eq('student_id', req.user.id)
+            .eq('drive_id', drive_id)
+            .limit(1);
+        if (existing && existing.length) {
+            return error(res, 'You have already applied for this drive', 409);
+        }
+
+        // 4. Eligibility check
         const { eligible, reasons } = checkEligibility(student, drive);
         if (!eligible) {
             return error(res, 'You are not eligible for this drive', 403, reasons);
         }
 
-        // 4. Insert application
-        const [result] = await pool.query(
-            `INSERT INTO applications (student_id, drive_id, eligibility_verified)
-       VALUES (?, ?, TRUE)`,
-            [req.user.id, drive_id]
-        );
+        // 5. Insert application
+        const { data: inserted, error: insertErr } = await supabase
+            .from('applications')
+            .insert([{
+                student_id: req.user.id,
+                drive_id,
+                eligibility_verified: true,
+            }])
+            .select()
+            .single();
 
-        return success(res, { application_id: result.insertId, drive_id, status: 'Pending' }, 'Application submitted successfully', 201);
+        if (insertErr) throw insertErr;
+
+        return success(res, {
+            application_id: inserted.application_id,
+            drive_id,
+            status: 'Pending',
+        }, 'Application submitted successfully', 201);
 
     } catch (err) {
         console.error('Apply error:', err);
@@ -57,25 +83,56 @@ router.get('/applications', verifyToken, requireOfficer, async (req, res) => {
     try {
         const { drive_id, status, search } = req.query;
 
-        let query = `
-      SELECT a.application_id, a.application_status, a.applied_date, a.eligibility_verified,
-             s.student_id, s.full_name, s.roll_number, s.email, s.branch, s.year, s.percentage, s.backlogs,
-             d.drive_id, d.company_name, d.job_role, d.required_percentage, d.allowed_backlogs
-      FROM applications a
-      JOIN students s ON s.student_id = a.student_id
-      JOIN job_drives d ON d.drive_id = a.drive_id
-      WHERE d.created_by = ?
-    `;
-        const values = [req.user.id];
+        // Get all drives owned by this officer
+        const { data: officerDrives } = await supabase
+            .from('job_drives')
+            .select('drive_id')
+            .eq('created_by', req.user.id);
 
-        if (drive_id) { query += ' AND a.drive_id = ?'; values.push(drive_id); }
-        if (status) { query += ' AND a.application_status = ?'; values.push(status); }
-        if (search) { query += ' AND (s.full_name LIKE ? OR s.roll_number LIKE ?)'; values.push(`%${search}%`, `%${search}%`); }
+        const driveIds = (officerDrives || []).map(d => d.drive_id);
+        if (!driveIds.length) return success(res, []);
 
-        query += ' ORDER BY a.applied_date DESC';
+        let query = supabase
+            .from('applications')
+            .select(`
+                application_id, application_status, applied_date, eligibility_verified,
+                students (
+                    student_id, full_name, roll_number, email,
+                    branch, year, percentage, backlogs
+                ),
+                job_drives (
+                    drive_id, company_name, job_role,
+                    required_percentage, allowed_backlogs
+                )
+            `)
+            .in('drive_id', driveIds)
+            .order('applied_date', { ascending: false });
 
-        const [rows] = await pool.query(query, values);
-        return success(res, rows);
+        if (drive_id) query = query.eq('drive_id', drive_id);
+        if (status)   query = query.eq('application_status', status);
+
+        const { data: rows, error: qErr } = await query;
+        if (qErr) throw qErr;
+
+        // Flatten + optional search filter
+        let flat = (rows || []).map(r => ({
+            application_id:     r.application_id,
+            application_status: r.application_status,
+            applied_date:       r.applied_date,
+            eligibility_verified: r.eligibility_verified,
+            ...r.students,
+            ...r.job_drives,
+        }));
+
+        if (search) {
+            const s = search.toLowerCase();
+            flat = flat.filter(r =>
+                (r.full_name   || '').toLowerCase().includes(s) ||
+                (r.roll_number || '').toLowerCase().includes(s)
+            );
+        }
+
+        return success(res, flat);
     } catch (err) {
         console.error('Applications fetch error:', err);
         return error(res, 'Failed to fetch applications', 500, err.message);
@@ -84,7 +141,7 @@ router.get('/applications', verifyToken, requireOfficer, async (req, res) => {
 
 // ══════════════════════════════════════════════════════
 // PUT /api/applications/:id/status   (Officer)
-// Body: { status: 'Shortlisted' | 'Selected' | 'Rejected' }
+// Body: { status, officer_notes }
 // ══════════════════════════════════════════════════════
 router.put('/applications/:id/status', verifyToken, requireOfficer, async (req, res) => {
     const { status, officer_notes } = req.body;
@@ -95,17 +152,27 @@ router.put('/applications/:id/status', verifyToken, requireOfficer, async (req, 
     }
 
     try {
-        const [result] = await pool.query(
-            `UPDATE applications a
-       JOIN job_drives d ON d.drive_id = a.drive_id
-       SET a.application_status = ?, a.officer_notes = ?
-       WHERE a.application_id = ? AND d.created_by = ?`,
-            [status, officer_notes || null, req.params.id, req.user.id]
-        );
+        // Verify the application belongs to a drive owned by this officer
+        const { data: app } = await supabase
+            .from('applications')
+            .select('application_id, job_drives(created_by)')
+            .eq('application_id', req.params.id)
+            .single();
 
-        if (!result.affectedRows) return error(res, 'Application not found or not authorized', 404);
+        if (!app || app.job_drives?.created_by !== req.user.id) {
+            return error(res, 'Application not found or not authorized', 404);
+        }
 
-        return success(res, { application_id: parseInt(req.params.id), status }, 'Status updated successfully');
+        const { error: updateErr } = await supabase
+            .from('applications')
+            .update({ application_status: status, officer_notes: officer_notes || null })
+            .eq('application_id', req.params.id);
+
+        if (updateErr) throw updateErr;
+
+        return success(res, {
+            application_id: parseInt(req.params.id), status,
+        }, 'Status updated successfully');
     } catch (err) {
         console.error('Status update error:', err);
         return error(res, 'Failed to update status', 500, err.message);
@@ -114,33 +181,58 @@ router.put('/applications/:id/status', verifyToken, requireOfficer, async (req, 
 
 // ══════════════════════════════════════════════════════
 // GET /api/applications/all-students   (Officer)
+// Query params: branch, search, placed
 // ══════════════════════════════════════════════════════
 router.get('/applications/all-students', verifyToken, requireOfficer, async (req, res) => {
     try {
         const { branch, search, placed } = req.query;
-        let query = `
-      SELECT s.student_id, s.full_name, s.roll_number, s.email, s.mobile_number,
-             s.branch, s.year, s.percentage, s.backlogs,
-             p.overall_rank, p.avg_quiz_score, p.total_coding_score,
-             MAX(CASE WHEN a.application_status = 'Selected' THEN 1 ELSE 0 END) AS is_placed
-      FROM students s
-      LEFT JOIN performance p ON p.student_id = s.student_id
-      LEFT JOIN applications a ON a.student_id = s.student_id
-    `;
-        const conditions = [];
-        const values = [];
 
-        if (branch) { conditions.push('s.branch = ?'); values.push(branch); }
-        if (search) { conditions.push('(s.full_name LIKE ? OR s.roll_number LIKE ?)'); values.push(`%${search}%`, `%${search}%`); }
+        let query = supabase
+            .from('students')
+            .select(`
+                student_id, full_name, roll_number, email, mobile_number,
+                branch, year, percentage, backlogs,
+                performance (overall_rank, avg_quiz_score, total_coding_score),
+                applications (application_status)
+            `)
+            .order('roll_number');
 
-        if (conditions.length) query += ' WHERE ' + conditions.join(' AND ');
-        query += ' GROUP BY s.student_id';
-        if (placed === 'true') query += ' HAVING is_placed = 1';
-        if (placed === 'false') query += ' HAVING is_placed = 0';
-        query += ' ORDER BY s.roll_number';
+        if (branch) query = query.eq('branch', branch);
 
-        const [rows] = await pool.query(query, values);
-        return success(res, rows);
+        const { data: rows, error: qErr } = await query;
+        if (qErr) throw qErr;
+
+        let result = (rows || []).map(s => {
+            const isPlaced = (s.applications || []).some(a => a.application_status === 'Selected') ? 1 : 0;
+            return {
+                student_id:         s.student_id,
+                full_name:          s.full_name,
+                roll_number:        s.roll_number,
+                email:              s.email,
+                mobile_number:      s.mobile_number,
+                branch:             s.branch,
+                year:               s.year,
+                percentage:         s.percentage,
+                backlogs:           s.backlogs,
+                overall_rank:       s.performance?.[0]?.overall_rank    || null,
+                avg_quiz_score:     s.performance?.[0]?.avg_quiz_score  || 0,
+                total_coding_score: s.performance?.[0]?.total_coding_score || 0,
+                is_placed:          isPlaced,
+            };
+        });
+
+        if (search) {
+            const s = search.toLowerCase();
+            result = result.filter(r =>
+                (r.full_name   || '').toLowerCase().includes(s) ||
+                (r.roll_number || '').toLowerCase().includes(s)
+            );
+        }
+
+        if (placed === 'true')  result = result.filter(r => r.is_placed === 1);
+        if (placed === 'false') result = result.filter(r => r.is_placed === 0);
+
+        return success(res, result);
     } catch (err) {
         console.error('All students fetch error:', err);
         return error(res, 'Failed to fetch students', 500, err.message);

@@ -1,39 +1,51 @@
 // routes/drives.js  — Job Drive APIs
 const router = require('express').Router();
-const pool = require('../config/db');
-const { verifyToken, requireOfficer, requireStudent } = require('../middleware/auth');
+const supabase = require('../config/db');
+const { verifyToken, requireOfficer } = require('../middleware/auth');
 const { success, error, checkEligibility } = require('../utils/helpers');
 
 // ══════════════════════════════════════════════════════
 // GET /api/drives
-// Public — returns all active drives
-// If student token is present, adds eligibility info
+// Returns all active drives (with eligibility info if student)
 // ══════════════════════════════════════════════════════
 router.get('/', verifyToken, async (req, res) => {
     try {
-        const [drives] = await pool.query(
-            `SELECT d.*, o.full_name AS officer_name
-       FROM job_drives d
-       JOIN officers o ON o.officer_id = d.created_by
-       WHERE d.is_active = TRUE AND d.last_date >= CURDATE()
-       ORDER BY d.created_at DESC`
-        );
+        const today = new Date().toISOString().split('T')[0];
+
+        const { data: drives, error: dErr } = await supabase
+            .from('job_drives')
+            .select('*, officers(full_name)')
+            .eq('is_active', true)
+            .gte('last_date', today)
+            .order('created_at', { ascending: false });
+
+        if (dErr) throw dErr;
+
+        // Flatten officer name
+        const flatDrives = (drives || []).map(d => ({
+            ...d,
+            officer_name: d.officers?.full_name || null,
+            officers: undefined,
+        }));
 
         // If logged-in student, attach eligibility + applied status
         if (req.user?.role === 'student') {
-            const [studentRows] = await pool.query(
-                'SELECT * FROM students WHERE student_id = ?', [req.user.id]
-            );
-            const student = studentRows[0];
+            const { data: studentRows } = await supabase
+                .from('students')
+                .select('*')
+                .eq('student_id', req.user.id)
+                .single();
 
-            const [appliedRows] = await pool.query(
-                'SELECT drive_id, application_status FROM applications WHERE student_id = ?', [req.user.id]
-            );
+            const { data: appliedRows } = await supabase
+                .from('applications')
+                .select('drive_id, application_status')
+                .eq('student_id', req.user.id);
+
             const appliedMap = {};
-            appliedRows.forEach(r => (appliedMap[r.drive_id] = r.application_status));
+            (appliedRows || []).forEach(r => (appliedMap[r.drive_id] = r.application_status));
 
-            const enriched = drives.map(drive => {
-                const { eligible, reasons } = checkEligibility(student, drive);
+            const enriched = flatDrives.map(drive => {
+                const { eligible, reasons } = checkEligibility(studentRows, drive);
                 return {
                     ...drive,
                     is_eligible: eligible,
@@ -46,7 +58,7 @@ router.get('/', verifyToken, async (req, res) => {
             return success(res, enriched);
         }
 
-        return success(res, drives);
+        return success(res, flatDrives);
     } catch (err) {
         console.error('Drives fetch error:', err);
         return error(res, 'Failed to fetch drives', 500, err.message);
@@ -59,15 +71,19 @@ router.get('/', verifyToken, async (req, res) => {
 // ══════════════════════════════════════════════════════
 router.get('/:id', verifyToken, async (req, res) => {
     try {
-        const [rows] = await pool.query(
-            `SELECT d.*, o.full_name AS officer_name
-       FROM job_drives d
-       JOIN officers o ON o.officer_id = d.created_by
-       WHERE d.drive_id = ?`,
-            [req.params.id]
-        );
-        if (!rows.length) return error(res, 'Drive not found', 404);
-        return success(res, rows[0]);
+        const { data: drive, error: dErr } = await supabase
+            .from('job_drives')
+            .select('*, officers(full_name)')
+            .eq('drive_id', req.params.id)
+            .single();
+
+        if (dErr || !drive) return error(res, 'Drive not found', 404);
+
+        return success(res, {
+            ...drive,
+            officer_name: drive.officers?.full_name || null,
+            officers: undefined,
+        });
     } catch (err) {
         return error(res, 'Failed to fetch drive', 500, err.message);
     }
@@ -75,10 +91,6 @@ router.get('/:id', verifyToken, async (req, res) => {
 
 // ══════════════════════════════════════════════════════
 // POST /api/drives/create  (Officer only)
-// Body: { company_name, job_role, description, package_lpa, location,
-//         required_percentage, allowed_backlogs, required_branch,
-//         required_year, available_seats, number_of_rounds,
-//         drive_date, last_date }
 // ══════════════════════════════════════════════════════
 router.post('/create', verifyToken, requireOfficer, async (req, res) => {
     const {
@@ -95,33 +107,33 @@ router.post('/create', verifyToken, requireOfficer, async (req, res) => {
     }
 
     try {
-        // required_branch can be an array or comma string
-        const branchStr = Array.isArray(required_branch)
-            ? required_branch.join(',')
-            : required_branch;
+        const branchStr = Array.isArray(required_branch) ? required_branch.join(',') : required_branch;
+        const yearStr   = Array.isArray(required_year)   ? required_year.join(',')   : required_year;
 
-        const yearStr = Array.isArray(required_year)
-            ? required_year.join(',')
-            : required_year;
+        const { data: inserted, error: insertErr } = await supabase
+            .from('job_drives')
+            .insert([{
+                company_name, job_role,
+                description: description || null,
+                package_lpa: parseFloat(package_lpa),
+                location,
+                required_percentage: parseFloat(required_percentage),
+                allowed_backlogs: parseInt(allowed_backlogs) || 0,
+                required_branch: branchStr,
+                required_year: yearStr,
+                available_seats: available_seats ? parseInt(available_seats) : null,
+                number_of_rounds: number_of_rounds ? parseInt(number_of_rounds) : null,
+                drive_date, last_date,
+                created_by: req.user.id,
+            }])
+            .select()
+            .single();
 
-        const [result] = await pool.query(
-            `INSERT INTO job_drives
-         (company_name, job_role, description, package_lpa, location,
-          required_percentage, allowed_backlogs, required_branch,
-          required_year, available_seats, number_of_rounds,
-          drive_date, last_date, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                company_name, job_role, description || null, parseFloat(package_lpa),
-                location, parseFloat(required_percentage), parseInt(allowed_backlogs) || 0,
-                branchStr, yearStr,
-                available_seats ? parseInt(available_seats) : null,
-                number_of_rounds ? parseInt(number_of_rounds) : null,
-                drive_date, last_date, req.user.id,
-            ]
-        );
+        if (insertErr) throw insertErr;
 
-        return success(res, { drive_id: result.insertId, company_name, job_role }, 'Drive created successfully', 201);
+        return success(res, {
+            drive_id: inserted.drive_id, company_name, job_role,
+        }, 'Drive created successfully', 201);
     } catch (err) {
         console.error('Create drive error:', err);
         return error(res, 'Failed to create drive', 500, err.message);
@@ -129,31 +141,32 @@ router.post('/create', verifyToken, requireOfficer, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════
-// PUT /api/drives/:id  (Officer only — update drive)
+// PUT /api/drives/:id  (Officer only)
 // ══════════════════════════════════════════════════════
 router.put('/:id', verifyToken, requireOfficer, async (req, res) => {
     try {
-        const allowed = ['company_name', 'job_role', 'description', 'package_lpa', 'location',
+        const allowed = [
+            'company_name', 'job_role', 'description', 'package_lpa', 'location',
             'required_percentage', 'allowed_backlogs', 'required_branch',
-            'required_year', 'available_seats', 'number_of_rounds', 'drive_date',
-            'last_date', 'is_active'];
-        const fields = [];
-        const values = [];
+            'required_year', 'available_seats', 'number_of_rounds',
+            'drive_date', 'last_date', 'is_active',
+        ];
 
+        const updates = {};
         allowed.forEach(key => {
-            if (req.body[key] !== undefined) {
-                fields.push(`${key} = ?`);
-                values.push(req.body[key]);
-            }
+            if (req.body[key] !== undefined) updates[key] = req.body[key];
         });
 
-        if (!fields.length) return error(res, 'No fields to update', 400);
-        values.push(req.params.id, req.user.id);
+        if (!Object.keys(updates).length) return error(res, 'No fields to update', 400);
 
-        await pool.query(
-            `UPDATE job_drives SET ${fields.join(', ')} WHERE drive_id = ? AND created_by = ?`,
-            values
-        );
+        const { error: updateErr } = await supabase
+            .from('job_drives')
+            .update(updates)
+            .eq('drive_id', req.params.id)
+            .eq('created_by', req.user.id);
+
+        if (updateErr) throw updateErr;
+
         return success(res, {}, 'Drive updated successfully');
     } catch (err) {
         return error(res, 'Failed to update drive', 500, err.message);
@@ -161,14 +174,18 @@ router.put('/:id', verifyToken, requireOfficer, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════
-// DELETE /api/drives/:id  (Officer only)
+// DELETE /api/drives/:id  (Officer only — soft delete)
 // ══════════════════════════════════════════════════════
 router.delete('/:id', verifyToken, requireOfficer, async (req, res) => {
     try {
-        await pool.query(
-            'UPDATE job_drives SET is_active = FALSE WHERE drive_id = ? AND created_by = ?',
-            [req.params.id, req.user.id]
-        );
+        const { error: updateErr } = await supabase
+            .from('job_drives')
+            .update({ is_active: false })
+            .eq('drive_id', req.params.id)
+            .eq('created_by', req.user.id);
+
+        if (updateErr) throw updateErr;
+
         return success(res, {}, 'Drive deactivated successfully');
     } catch (err) {
         return error(res, 'Failed to deactivate drive', 500, err.message);

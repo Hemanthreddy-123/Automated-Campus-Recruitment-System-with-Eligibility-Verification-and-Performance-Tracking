@@ -1,32 +1,24 @@
-const mysql = require('mysql2/promise');
+const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
-// ── Create Connection Pool ──────────────────────────────────────────────────
-const pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    port: parseInt(process.env.DB_PORT) || 3306,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0,
-    timezone: '+05:30',         // IST
-    charset: 'utf8mb4',
-});
+// ── Create Supabase Client ──────────────────────────────────────────────────
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_KEY
+);
 
 // ── Test connection on startup ──────────────────────────────────────────────
 async function testConnection() {
     try {
-        const conn = await pool.getConnection();
-        console.log(`✅ MySQL connected  →  ${process.env.DB_HOST}:${process.env.DB_PORT} / ${process.env.DB_NAME}`);
-        conn.release();
+        const { error } = await supabase.from('students').select('student_id').limit(1);
+        if (error) throw error;
+        console.log(`✅ Supabase connected  →  ${process.env.SUPABASE_URL}`);
     } catch (err) {
-        console.error('❌ MySQL connection failed:', err.message);
-        process.exit(1);
+        console.error('❌ Supabase connection failed:', err.message);
+        // Don't exit — table may not exist yet, but client is valid
     }
 }
 
 testConnection();
 
-module.exports = pool;
+module.exports = supabase;

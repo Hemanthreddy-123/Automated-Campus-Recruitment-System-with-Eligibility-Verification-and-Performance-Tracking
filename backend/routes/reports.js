@@ -1,67 +1,95 @@
-// routes/reports.js  — Analytics & Performance APIs (Officer)
+// routes/reports.js  — Analytics & Performance APIs
 const router = require('express').Router();
-const pool = require('../config/db');
-const { verifyToken, requireOfficer, requireAnyRole } = require('../middleware/auth');
+const supabase = require('../config/db');
+const { verifyToken, requireOfficer } = require('../middleware/auth');
 const { success, error } = require('../utils/helpers');
 
 // ══════════════════════════════════════════════════════
-// GET /api/reports/analytics
-// Overall placement analytics (Officer)
+// GET /api/reports/analytics   (Officer)
+// Overall placement analytics
 // ══════════════════════════════════════════════════════
 router.get('/analytics', verifyToken, requireOfficer, async (req, res) => {
     try {
-        const [summary] = await pool.query(`
-      SELECT
-        (SELECT COUNT(*) FROM students) AS total_students,
-        (SELECT COUNT(*) FROM job_drives WHERE is_active = TRUE) AS active_drives,
-        (SELECT COUNT(*) FROM applications) AS total_applications,
-        (SELECT COUNT(DISTINCT student_id) FROM applications WHERE application_status = 'Selected') AS students_placed,
-        (SELECT COUNT(*) FROM applications WHERE application_status = 'Shortlisted') AS students_shortlisted,
-        (SELECT COUNT(*) FROM applications WHERE application_status = 'Pending') AS pending_applications
-    `);
+        // Parallel fetches
+        const [
+            { count: total_students },
+            { count: active_drives },
+            { count: total_applications },
+            { data: appStatuses },
+            { data: students },
+            { data: drives },
+        ] = await Promise.all([
+            supabase.from('students').select('*', { count: 'exact', head: true }),
+            supabase.from('job_drives').select('*', { count: 'exact', head: true }).eq('is_active', true),
+            supabase.from('applications').select('*', { count: 'exact', head: true }),
+            supabase.from('applications').select('application_status, student_id'),
+            supabase.from('students').select('student_id, branch, percentage, performance(total_coding_score, avg_quiz_score, overall_rank)'),
+            supabase.from('job_drives').select('drive_id, company_name, job_role, package_lpa, drive_date, applications(application_status)').order('created_at', { ascending: false }),
+        ]);
 
-        const [branchStats] = await pool.query(`
-      SELECT
-        s.branch,
-        COUNT(DISTINCT s.student_id) AS total_students,
-        COUNT(DISTINCT CASE WHEN a.application_status = 'Selected' THEN s.student_id END) AS placed,
-        ROUND(
-          COUNT(DISTINCT CASE WHEN a.application_status = 'Selected' THEN s.student_id END)
-          / COUNT(DISTINCT s.student_id) * 100, 1
-        ) AS placement_percentage
-      FROM students s
-      LEFT JOIN applications a ON a.student_id = s.student_id
-      GROUP BY s.branch
-      ORDER BY placement_percentage DESC
-    `);
+        const students_placed     = new Set((appStatuses || []).filter(a => a.application_status === 'Selected').map(a => a.student_id)).size;
+        const students_shortlisted = (appStatuses || []).filter(a => a.application_status === 'Shortlisted').length;
+        const pending_applications = (appStatuses || []).filter(a => a.application_status === 'Pending').length;
 
-        const [driveStats] = await pool.query(`
-      SELECT
-        d.drive_id, d.company_name, d.job_role, d.package_lpa, d.drive_date,
-        COUNT(a.application_id) AS total_applications,
-        SUM(CASE WHEN a.application_status = 'Shortlisted' THEN 1 ELSE 0 END) AS shortlisted,
-        SUM(CASE WHEN a.application_status = 'Selected'    THEN 1 ELSE 0 END) AS selected,
-        SUM(CASE WHEN a.application_status = 'Rejected'    THEN 1 ELSE 0 END) AS rejected
-      FROM job_drives d
-      LEFT JOIN applications a ON a.drive_id = d.drive_id
-      GROUP BY d.drive_id
-      ORDER BY d.created_at DESC
-    `);
+        // Branch stats
+        const branchMap = {};
+        (students || []).forEach(s => {
+            if (!branchMap[s.branch]) branchMap[s.branch] = { total: 0, placed: 0 };
+            branchMap[s.branch].total++;
+        });
+        (appStatuses || []).filter(a => a.application_status === 'Selected').forEach(a => {
+            const st = (students || []).find(s => s.student_id === a.student_id);
+            if (st && branchMap[st.branch]) branchMap[st.branch].placed++;
+        });
 
-        const [topStudents] = await pool.query(`
-      SELECT s.full_name, s.roll_number, s.branch, s.percentage,
-             p.total_coding_score, p.avg_quiz_score, p.overall_rank
-      FROM students s
-      LEFT JOIN performance p ON p.student_id = s.student_id
-      ORDER BY s.percentage DESC
-      LIMIT 10
-    `);
+        const branch_stats = Object.entries(branchMap).map(([branch, v]) => ({
+            branch,
+            total_students:       v.total,
+            placed:               v.placed,
+            placement_percentage: v.total ? +((v.placed / v.total) * 100).toFixed(1) : 0,
+        })).sort((a, b) => b.placement_percentage - a.placement_percentage);
+
+        // Drive stats
+        const drive_stats = (drives || []).map(d => {
+            const apps = d.applications || [];
+            return {
+                drive_id:           d.drive_id,
+                company_name:       d.company_name,
+                job_role:           d.job_role,
+                package_lpa:        d.package_lpa,
+                drive_date:         d.drive_date,
+                total_applications: apps.length,
+                shortlisted:        apps.filter(a => a.application_status === 'Shortlisted').length,
+                selected:           apps.filter(a => a.application_status === 'Selected').length,
+                rejected:           apps.filter(a => a.application_status === 'Rejected').length,
+            };
+        });
+
+        // Top students by percentage
+        const top_students = (students || [])
+            .sort((a, b) => parseFloat(b.percentage) - parseFloat(a.percentage))
+            .slice(0, 10)
+            .map(s => ({
+                student_id:         s.student_id,
+                branch:             s.branch,
+                percentage:         s.percentage,
+                total_coding_score: s.performance?.[0]?.total_coding_score || 0,
+                avg_quiz_score:     s.performance?.[0]?.avg_quiz_score     || 0,
+                overall_rank:       s.performance?.[0]?.overall_rank       || null,
+            }));
 
         return success(res, {
-            summary: summary[0],
-            branch_stats: branchStats,
-            drive_stats: driveStats,
-            top_students: topStudents,
+            summary: {
+                total_students,
+                active_drives,
+                total_applications,
+                students_placed,
+                students_shortlisted,
+                pending_applications,
+            },
+            branch_stats,
+            drive_stats,
+            top_students,
         });
 
     } catch (err) {
@@ -71,29 +99,50 @@ router.get('/analytics', verifyToken, requireOfficer, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════
-// GET /api/reports/performance
-// All students performance overview (Officer)
+// GET /api/reports/performance   (Officer)
+// All students performance overview
 // ══════════════════════════════════════════════════════
 router.get('/performance', verifyToken, requireOfficer, async (req, res) => {
     try {
-        const [rows] = await pool.query(`
-      SELECT
-        s.student_id, s.full_name, s.roll_number, s.branch, s.year,
-        s.percentage, s.backlogs,
-        p.total_quiz_score, p.quiz_attempts, p.avg_quiz_score,
-        p.total_coding_score, p.coding_submissions, p.overall_rank,
-        (SELECT COUNT(*) FROM applications a WHERE a.student_id = s.student_id) AS total_applications,
-        (SELECT COUNT(*) FROM applications a WHERE a.student_id = s.student_id AND a.application_status = 'Selected') AS offers_received
-      FROM students s
-      LEFT JOIN performance p ON p.student_id = s.student_id
-      ORDER BY p.overall_rank ASC, s.percentage DESC
-    `);
+        const { data: rows, error: qErr } = await supabase
+            .from('students')
+            .select(`
+                student_id, full_name, roll_number, branch, year,
+                percentage, backlogs,
+                performance (
+                    total_quiz_score, quiz_attempts, avg_quiz_score,
+                    total_coding_score, coding_submissions, overall_rank
+                ),
+                applications (application_status)
+            `);
 
-        // Re-calculate ranks by overall score
-        const scored = rows.map(r => ({
-            ...r,
-            computed_score: (r.total_quiz_score || 0) + (r.total_coding_score || 0) + (parseFloat(r.percentage) * 10 || 0),
-        })).sort((a, b) => b.computed_score - a.computed_score);
+        if (qErr) throw qErr;
+
+        const scored = (rows || []).map(s => {
+            const perf = s.performance?.[0] || {};
+            const apps = s.applications || [];
+            return {
+                student_id:         s.student_id,
+                full_name:          s.full_name,
+                roll_number:        s.roll_number,
+                branch:             s.branch,
+                year:               s.year,
+                percentage:         s.percentage,
+                backlogs:           s.backlogs,
+                total_quiz_score:   perf.total_quiz_score   || 0,
+                quiz_attempts:      perf.quiz_attempts      || 0,
+                avg_quiz_score:     perf.avg_quiz_score     || 0,
+                total_coding_score: perf.total_coding_score || 0,
+                coding_submissions: perf.coding_submissions || 0,
+                overall_rank:       perf.overall_rank       || null,
+                total_applications: apps.length,
+                offers_received:    apps.filter(a => a.application_status === 'Selected').length,
+                computed_score:
+                    (perf.total_quiz_score   || 0) +
+                    (perf.total_coding_score || 0) +
+                    (parseFloat(s.percentage) * 10 || 0),
+            };
+        }).sort((a, b) => b.computed_score - a.computed_score);
 
         scored.forEach((r, i) => (r.computed_rank = i + 1));
 
@@ -106,41 +155,40 @@ router.get('/performance', verifyToken, requireOfficer, async (req, res) => {
 
 // ══════════════════════════════════════════════════════
 // GET /api/reports/my-performance   (Student)
-// Personal performance report for logged-in student
+// Personal performance report
 // ══════════════════════════════════════════════════════
 router.get('/my-performance', verifyToken, async (req, res) => {
     try {
-        const [studentRows] = await pool.query(
-            `SELECT s.*, p.* FROM students s
-       LEFT JOIN performance p ON p.student_id = s.student_id
-       WHERE s.student_id = ?`,
-            [req.user.id]
-        );
-        if (!studentRows.length) return error(res, 'Student not found', 404);
+        const { data: student, error: sErr } = await supabase
+            .from('students')
+            .select('*, performance(*)')
+            .eq('student_id', req.user.id)
+            .single();
 
-        const [quizHistory] = await pool.query(
-            'SELECT * FROM quiz_results WHERE student_id = ? ORDER BY attempt_date DESC LIMIT 10',
-            [req.user.id]
-        );
+        if (sErr || !student) return error(res, 'Student not found', 404);
 
-        const [codingHistory] = await pool.query(
-            'SELECT * FROM coding_results WHERE student_id = ? ORDER BY submission_time DESC LIMIT 10',
-            [req.user.id]
-        );
+        const [
+            { data: quizHistory },
+            { data: codingHistory },
+            { data: applicationHistory },
+        ] = await Promise.all([
+            supabase.from('quiz_results').select('*').eq('student_id', req.user.id).order('attempt_date', { ascending: false }).limit(10),
+            supabase.from('coding_results').select('*').eq('student_id', req.user.id).order('submission_time', { ascending: false }).limit(10),
+            supabase.from('applications').select('*, job_drives(company_name, job_role, package_lpa)').eq('student_id', req.user.id).order('applied_date', { ascending: false }),
+        ]);
 
-        const [applicationHistory] = await pool.query(
-            `SELECT a.*, d.company_name, d.job_role, d.package_lpa
-       FROM applications a
-       JOIN job_drives d ON d.drive_id = a.drive_id
-       WHERE a.student_id = ?
-       ORDER BY a.applied_date DESC`,
-            [req.user.id]
-        );
-
-        const student = { ...studentRows[0] };
         delete student.password;
 
-        return success(res, { student, quiz_history: quizHistory, coding_history: codingHistory, application_history: applicationHistory });
+        return success(res, {
+            student,
+            quiz_history:        quizHistory        || [],
+            coding_history:      codingHistory      || [],
+            application_history: (applicationHistory || []).map(a => ({
+                ...a,
+                ...a.job_drives,
+                job_drives: undefined,
+            })),
+        });
     } catch (err) {
         console.error('My performance error:', err);
         return error(res, 'Failed to fetch performance', 500, err.message);

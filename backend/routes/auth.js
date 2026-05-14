@@ -1,7 +1,7 @@
 // routes/auth.js  — POST /api/register  |  POST /api/login
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
-const pool = require('../config/db');
+const supabase = require('../config/db');
 const { generateToken } = require('../middleware/auth');
 const { success, error } = require('../utils/helpers');
 
@@ -36,41 +36,76 @@ router.post('/register', async (req, res) => {
                 return error(res, 'For students: roll_number, branch, year and percentage are required', 400);
             }
 
-            const [existing] = await pool.query(
-                'SELECT student_id FROM students WHERE email = ? OR roll_number = ?', [email, roll_number]
-            );
-            if (existing.length) return error(res, 'Email or Roll Number already registered', 409);
+            // Check duplicate
+            const { data: existing } = await supabase
+                .from('students')
+                .select('student_id')
+                .or(`email.eq.${email},roll_number.eq.${roll_number}`)
+                .limit(1);
 
-            const [result] = await pool.query(
-                `INSERT INTO students
-           (full_name, roll_number, email, mobile_number, branch, year, percentage, backlogs, password)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [full_name, roll_number, email, mobile_number, branch, parseInt(year), parseFloat(percentage), parseInt(backlogs), hash]
-            );
+            if (existing && existing.length) {
+                return error(res, 'Email or Roll Number already registered', 409);
+            }
+
+            const { data: inserted, error: insertErr } = await supabase
+                .from('students')
+                .insert([{
+                    full_name,
+                    roll_number,
+                    email,
+                    mobile_number,
+                    branch,
+                    year: parseInt(year),
+                    percentage: parseFloat(percentage),
+                    backlogs: parseInt(backlogs),
+                    password: hash,
+                }])
+                .select()
+                .single();
+
+            if (insertErr) throw insertErr;
 
             // Create blank performance record
-            await pool.query('INSERT IGNORE INTO performance (student_id) VALUES (?)', [result.insertId]);
+            await supabase
+                .from('performance')
+                .upsert([{ student_id: inserted.student_id }], { onConflict: 'student_id' });
 
-            const token = generateToken({ id: result.insertId, role: 'student', email });
-            return success(res, { token, role: 'student', user: { id: result.insertId, full_name, email, roll_number, branch, year, percentage } }, 'Student registered successfully', 201);
+            const token = generateToken({ id: inserted.student_id, role: 'student', email });
+            return success(res, {
+                token, role: 'student',
+                user: {
+                    id: inserted.student_id, full_name, email,
+                    roll_number, branch, year, percentage,
+                },
+            }, 'Student registered successfully', 201);
 
         } else {
             // Officer
             if (!employee_id) return error(res, 'employee_id is required for officers', 400);
 
-            const [existing] = await pool.query(
-                'SELECT officer_id FROM officers WHERE email = ? OR employee_id = ?', [email, employee_id]
-            );
-            if (existing.length) return error(res, 'Email or Employee ID already registered', 409);
+            const { data: existing } = await supabase
+                .from('officers')
+                .select('officer_id')
+                .or(`email.eq.${email},employee_id.eq.${employee_id}`)
+                .limit(1);
 
-            const [result] = await pool.query(
-                `INSERT INTO officers (full_name, email, mobile_number, employee_id, department, password)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-                [full_name, email, mobile_number, employee_id, department, hash]
-            );
+            if (existing && existing.length) {
+                return error(res, 'Email or Employee ID already registered', 409);
+            }
 
-            const token = generateToken({ id: result.insertId, role: 'officer', email });
-            return success(res, { token, role: 'officer', user: { id: result.insertId, full_name, email, employee_id, department } }, 'Officer registered successfully', 201);
+            const { data: inserted, error: insertErr } = await supabase
+                .from('officers')
+                .insert([{ full_name, email, mobile_number, employee_id, department, password: hash }])
+                .select()
+                .single();
+
+            if (insertErr) throw insertErr;
+
+            const token = generateToken({ id: inserted.officer_id, role: 'officer', email });
+            return success(res, {
+                token, role: 'officer',
+                user: { id: inserted.officer_id, full_name, email, employee_id, department },
+            }, 'Officer registered successfully', 201);
         }
 
     } catch (err) {
@@ -82,16 +117,10 @@ router.post('/register', async (req, res) => {
 // ══════════════════════════════════════════════════════
 // POST /api/login
 // Body: { email, password, role }
-//
-// For students: 'email' field accepts EITHER:
-//   • Regd.No directly   (e.g.  22G21A0575)
-//   • Full email address (e.g.  22g21a0575@campus.edu)
-// Password for class-seeded students = their Regd.No
+// For students: 'email' field accepts Regd.No OR full email
 // ══════════════════════════════════════════════════════
 router.post('/login', async (req, res) => {
     const { email, password, role } = req.body;
-
-    // 'email' field is used as the login identifier (can be Regd.No for students)
     const loginId = (email || '').trim();
 
     if (!loginId || !password || !role) {
@@ -99,29 +128,28 @@ router.post('/login', async (req, res) => {
     }
 
     try {
-        let rows;
+        let query;
 
         if (role === 'student') {
-            // Students can log in with Regd.No OR full email
-            [rows] = await pool.query(
-                `SELECT * FROM students
-                 WHERE email = ? OR roll_number = ?
-                 LIMIT 1`,
-                [loginId, loginId.toUpperCase()]
-            );
+            query = supabase
+                .from('students')
+                .select('*')
+                .or(`email.eq.${loginId},roll_number.eq.${loginId.toUpperCase()}`)
+                .limit(1);
         } else if (role === 'officer') {
-            // Officers log in with email or employee_id
-            [rows] = await pool.query(
-                `SELECT * FROM officers
-                 WHERE email = ? OR employee_id = ?
-                 LIMIT 1`,
-                [loginId, loginId.toUpperCase()]
-            );
+            query = supabase
+                .from('officers')
+                .select('*')
+                .or(`email.eq.${loginId},employee_id.eq.${loginId.toUpperCase()}`)
+                .limit(1);
         } else {
             return error(res, 'role must be "student" or "officer"', 400);
         }
 
-        if (!rows.length) {
+        const { data: rows, error: queryErr } = await query;
+        if (queryErr) throw queryErr;
+
+        if (!rows || !rows.length) {
             return error(res, 'Invalid login ID or password', 401);
         }
 
@@ -134,8 +162,6 @@ router.post('/login', async (req, res) => {
         }
 
         const token = generateToken({ id: user[idField], role, email: user.email });
-
-        // Strip password before sending
         delete user.password;
 
         return success(res, { token, role, user }, 'Login successful');
