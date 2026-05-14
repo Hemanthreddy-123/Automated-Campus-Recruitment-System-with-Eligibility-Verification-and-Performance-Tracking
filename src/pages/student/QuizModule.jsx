@@ -22,6 +22,7 @@ export default function QuizModule() {
     const [submitting, setSubmitting] = useState(false);
     const [apiError, setApiError]   = useState('');
     const timerRef = useRef(null);
+    const submittingRef = useRef(false);
 
     // Load quiz history on mount
     useEffect(() => {
@@ -33,11 +34,17 @@ export default function QuizModule() {
 
     // Timer
     useEffect(() => {
-        if (view === 'quiz' && timeLeft > 0) {
-            timerRef.current = setInterval(() => setTimeLeft(t => {
-                if (t <= 1) { handleSubmit(); return 0; }
-                return t - 1;
-            }), 1000);
+        if (view === 'quiz') {
+            timerRef.current = setInterval(() => {
+                setTimeLeft(t => {
+                    if (t <= 1) {
+                        clearInterval(timerRef.current);
+                        if (!submittingRef.current) handleSubmitRef.current();
+                        return 0;
+                    }
+                    return t - 1;
+                });
+            }, 1000);
         }
         return () => clearInterval(timerRef.current);
     }, [view]);
@@ -50,12 +57,17 @@ export default function QuizModule() {
         setApiError('');
         try {
             const res = await startQuiz();
-            setQuizMeta(res.data);
-            setQuestions(res.data.questions || []);
+            // Shuffle and pick only 10 questions
+            const allQuestions = res.data.questions || [];
+            const shuffled = [...allQuestions].sort(() => Math.random() - 0.5);
+            const picked = shuffled.slice(0, 10);
+            setQuizMeta({ ...res.data, total_questions: 10, total_marks: 100 });
+            setQuestions(picked);
             setTimeLeft(res.data.time_limit_seconds || 900);
             setSelected({});
             setCurrent(0);
             setResult(null);
+            submittingRef.current = false;
             setView('quiz');
         } catch (e) {
             setApiError(e.message || 'Failed to start quiz');
@@ -65,13 +77,15 @@ export default function QuizModule() {
     };
 
     const handleSubmit = async () => {
+        if (submittingRef.current) return;
+        submittingRef.current = true;
         clearInterval(timerRef.current);
-        if (submitting) return;
         setSubmitting(true);
         try {
-            const answers = Object.entries(selected).map(([question_id, selected_option]) => ({
-                question_id: parseInt(question_id),
-                selected_option,
+            // Send all 10 questions; unanswered ones get -1 (will be marked wrong)
+            const answers = questions.map(q => ({
+                question_id: q.id,
+                selected_option: selected[q.id] !== undefined ? selected[q.id] : -1,
             }));
             const timeTaken = (quizMeta?.time_limit_seconds || 900) - timeLeft;
             const res = await submitQuiz({
@@ -80,15 +94,19 @@ export default function QuizModule() {
                 quiz_name: quizMeta?.quiz_name || 'General Aptitude & Technical Quiz',
             });
             setResult(res.data);
-            // Refresh history
             getQuizHistory().then(r => setHistory(r.data || [])).catch(() => {});
             setView('result');
         } catch (e) {
             setApiError(e.message || 'Failed to submit quiz');
+            submittingRef.current = false;
         } finally {
             setSubmitting(false);
         }
     };
+
+    // Keep a ref to handleSubmit so the timer can always call the latest version
+    const handleSubmitRef = useRef(handleSubmit);
+    useEffect(() => { handleSubmitRef.current = handleSubmit; });
 
     const sidebarUser = student
         ? { name: student.full_name, roll: `Roll: ${student.roll_number}`, sessionInfo: `${YEAR_LABELS[student.year] || ''} · ${student.branch?.split(' ')[0]}` }
@@ -229,7 +247,7 @@ export default function QuizModule() {
                                 <p style={{ fontWeight:600, color:'var(--black)', fontSize:13, margin:0 }}>Q{i+1}. {r.question}</p>
                             </div>
                             <div style={{ paddingLeft:26 }}>
-                                {questions[i]?.options?.map((opt, oi) => (
+                                {r.options?.map((opt, oi) => (
                                     <div key={oi} style={{
                                         padding:'5px 10px', borderRadius:7, fontSize:12, marginBottom:3,
                                         background: oi === r.correct_option ? 'var(--soft-mint)' : oi === r.selected_option && !r.is_correct ? '#fee2e2' : 'transparent',
